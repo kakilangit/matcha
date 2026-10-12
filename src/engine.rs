@@ -2,11 +2,14 @@
 
 use std::ops::Range;
 
+use serde::{Deserialize, Serialize};
+
 /// Maximum number of matches collected for a single search. Keeps the UI
 /// responsive when a pattern matches almost every position of a large text.
 pub const MATCH_LIMIT: usize = 10_000;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum EngineKind {
     /// The `regex` crate: linear time, no look-around or backreferences.
     #[default]
@@ -24,7 +27,8 @@ impl EngineKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Flags {
     pub case_insensitive: bool,
     pub multi_line: bool,

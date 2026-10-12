@@ -48,6 +48,7 @@ actions!(
         Paste,
         Undo,
         Redo,
+        Cancel,
     ]
 );
 
@@ -74,6 +75,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-end", SelectEnd, ctx),
         KeyBinding::new("enter", Newline, ctx),
         KeyBinding::new("shift-enter", Newline, ctx),
+        KeyBinding::new("escape", Cancel, ctx),
         KeyBinding::new("secondary-a", SelectAll, ctx),
         KeyBinding::new("secondary-c", Copy, ctx),
         KeyBinding::new("secondary-x", Cut, ctx),
@@ -117,6 +119,10 @@ pub struct Highlight {
 
 pub enum EditorEvent {
     Changed,
+    /// Enter was pressed in a single-line editor.
+    Submit,
+    /// Escape was pressed.
+    Cancel,
 }
 
 #[derive(Clone)]
@@ -130,6 +136,8 @@ pub struct Editor {
     content: String,
     placeholder: SharedString,
     read_only: bool,
+    /// Enter submits instead of inserting a newline, and pasted newlines become spaces.
+    single_line: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -162,6 +170,7 @@ impl Editor {
             content: String::new(),
             placeholder: SharedString::default(),
             read_only: false,
+            single_line: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -185,6 +194,18 @@ impl Editor {
     pub fn read_only(mut self) -> Self {
         self.read_only = true;
         self
+    }
+
+    pub fn single_line(mut self) -> Self {
+        self.single_line = true;
+        self
+    }
+
+    /// Selects all text, so typing replaces it.
+    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        self.selected_range = 0..self.content.len();
+        self.selection_reversed = false;
+        cx.notify();
     }
 
     /// Scroll container to keep the cursor visible in.
@@ -364,7 +385,7 @@ impl Editor {
         } else if target.y >= layout.total_height() {
             self.content.len()
         } else {
-            layout.offset_for_point(target)
+            self.offset_for_layout_point(layout, target)
         }
     }
 
@@ -482,7 +503,15 @@ impl Editor {
     }
 
     fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
-        self.replace_text_in_range(None, "\n", window, cx);
+        if self.single_line {
+            cx.emit(EditorEvent::Submit);
+        } else {
+            self.replace_text_in_range(None, "\n", window, cx);
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(EditorEvent::Cancel);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -503,7 +532,11 @@ impl Editor {
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.typing_at = None;
-            self.replace_text_in_range(None, &text.replace("\r\n", "\n"), window, cx);
+            let mut text = text.replace("\r\n", "\n");
+            if self.single_line {
+                text = text.replace('\n', " ");
+            }
+            self.replace_text_in_range(None, &text, window, cx);
             self.typing_at = None;
         }
     }
@@ -616,6 +649,16 @@ impl Editor {
             0
         } else if local.y >= layout.total_height() {
             self.content.len()
+        } else {
+            self.offset_for_layout_point(layout, local)
+        }
+    }
+
+    /// Text offset at a point local to the last layout. An empty editor's layout
+    /// shows the placeholder, so its offsets must not leak into the (empty) content.
+    fn offset_for_layout_point(&self, layout: &EditorLayout, local: Point<Pixels>) -> usize {
+        if self.content.is_empty() {
+            0
         } else {
             layout.offset_for_point(local)
         }
@@ -762,7 +805,7 @@ impl EntityInputHandler for Editor {
     ) -> Option<usize> {
         let layout = self.last_layout.as_ref()?;
         let local = point - layout.bounds.origin;
-        Some(self.offset_to_utf16(layout.offset_for_point(local)))
+        Some(self.offset_to_utf16(self.offset_for_layout_point(layout, local)))
     }
 }
 
@@ -793,6 +836,7 @@ impl Render for Editor {
             .on_action(cx.listener(Self::document_end))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::cancel))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))

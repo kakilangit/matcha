@@ -1,17 +1,30 @@
 //! The main window: pattern, sample text, matches panel and replace preview.
 
+use std::time::Duration;
+
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
-    MouseButton, ScrollHandle, SharedString, Subscription, Window, actions, div, prelude::*, px,
+    MouseButton, ScrollHandle, SharedString, Subscription, Task, Window, actions, div, prelude::*,
+    px,
 };
 
 use crate::editor::{Editor, EditorEvent, Highlight};
 use crate::engine::{EngineKind, Flags, MATCH_LIMIT, Matches, Regex};
+use crate::library::{self, Library, PatternData};
 use crate::theme::{MONO_FONT, Theme};
 
 actions!(
     matcha,
-    [FocusPattern, ToggleReplace, FocusNext, FocusPrevious]
+    [
+        FocusPattern,
+        ToggleReplace,
+        FocusNext,
+        FocusPrevious,
+        SavePattern,
+        SavePatternAs,
+        NewPattern,
+        ToggleLibrary,
+    ]
 );
 
 const KEY_CONTEXT: &str = "Matcha";
@@ -19,6 +32,16 @@ const KEY_CONTEXT: &str = "Matcha";
 /// Matches listed in the panel; the rest are still highlighted in the sample.
 const LISTED_MATCHES: usize = 500;
 const PREVIEW_CHARS: usize = 60;
+const NOTICE_DURATION: Duration = Duration::from_secs(3);
+
+/// Shows a shortcut in the platform's notation, e.g. `shortcut("⌘S", "Ctrl+S")`.
+fn shortcut(mac: &'static str, other: &'static str) -> &'static str {
+    if cfg!(target_os = "macos") {
+        mac
+    } else {
+        other
+    }
+}
 
 pub fn bind_keys(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -27,6 +50,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-r", ToggleReplace, ctx),
         KeyBinding::new("tab", FocusNext, ctx),
         KeyBinding::new("shift-tab", FocusPrevious, ctx),
+        KeyBinding::new("secondary-s", SavePattern, ctx),
+        KeyBinding::new("secondary-shift-s", SavePatternAs, ctx),
+        KeyBinding::new("secondary-n", NewPattern, ctx),
+        KeyBinding::new("secondary-o", ToggleLibrary, ctx),
     ]);
 }
 
@@ -100,6 +127,18 @@ pub struct Matcha {
     outcome: Outcome,
     replace_error: Option<String>,
     selected_match: Option<usize>,
+    library: Library,
+    /// The library entry the workbench was loaded from or last saved to.
+    current: Option<u64>,
+    show_library: bool,
+    /// Name field shown while saving a new library entry.
+    name_editor: Entity<Editor>,
+    naming: bool,
+    /// Entry whose delete button was clicked once and awaits confirmation.
+    pending_delete: Option<u64>,
+    /// Short-lived message in the status bar, and whether it is an error.
+    notice: Option<(String, bool)>,
+    _notice_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -121,15 +160,30 @@ impl Matcha {
                 .scroll_handle(result_scroll.clone())
         });
 
+        let name_editor = cx.new(|cx| Editor::new(cx).single_line().placeholder("Name"));
 
-        let subscriptions = [&pattern, &sample, &replacement]
+        let mut subscriptions: Vec<Subscription> = [&pattern, &sample, &replacement]
             .into_iter()
             .map(|editor| {
-                cx.subscribe(editor, |this, _, event: &EditorEvent, cx| match event {
-                    EditorEvent::Changed => this.recompute(cx),
+                cx.subscribe(editor, |this, _, event: &EditorEvent, cx| {
+                    if let EditorEvent::Changed = event {
+                        this.recompute(cx);
+                    }
                 })
             })
             .collect();
+        subscriptions.push(cx.subscribe_in(
+            &name_editor,
+            window,
+            |this, _, event: &EditorEvent, window, cx| match event {
+                EditorEvent::Submit => this.confirm_name(window, cx),
+                EditorEvent::Cancel => this.cancel_naming(window, cx),
+                EditorEvent::Changed => {}
+            },
+        ));
+
+        let library = Library::load(library::default_path());
+        let show_library = !library.entries().is_empty();
 
         window.focus(&pattern.focus_handle(cx));
 
@@ -147,6 +201,14 @@ impl Matcha {
             outcome: Outcome::Empty,
             replace_error: None,
             selected_match: None,
+            library,
+            current: None,
+            show_library,
+            name_editor,
+            naming: false,
+            pending_delete: None,
+            notice: None,
+            _notice_task: None,
             _subscriptions: subscriptions,
         };
         this.recompute(cx);
@@ -291,6 +353,177 @@ impl Matcha {
     }
 }
 
+/// Library actions.
+impl Matcha {
+    fn current_data(&self, cx: &App) -> PatternData {
+        PatternData {
+            pattern: self.pattern.read(cx).text().to_owned(),
+            sample: self.sample.read(cx).text().to_owned(),
+            replacement: self.replacement.read(cx).text().to_owned(),
+            flags: self.flags,
+            engine: self.engine,
+        }
+    }
+
+    /// Whether the workbench differs from the saved entry, without copying the texts.
+    fn is_modified(&self, data: &PatternData, cx: &App) -> bool {
+        data.pattern != self.pattern.read(cx).text()
+            || data.sample != self.sample.read(cx).text()
+            || data.replacement != self.replacement.read(cx).text()
+            || data.flags != self.flags
+            || data.engine != self.engine
+    }
+
+    fn show_notice(&mut self, text: String, is_error: bool, cx: &mut Context<Self>) {
+        self.notice = Some((text, is_error));
+        self._notice_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NOTICE_DURATION).await;
+            this.update(cx, |this, cx| {
+                this.notice = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Fills the workbench from `data` and re-runs the search.
+    fn apply(&mut self, data: &PatternData, cx: &mut Context<Self>) {
+        self.pattern
+            .update(cx, |editor, cx| editor.set_text(data.pattern.clone(), cx));
+        self.sample
+            .update(cx, |editor, cx| editor.set_text(data.sample.clone(), cx));
+        self.replacement.update(cx, |editor, cx| {
+            editor.set_text(data.replacement.clone(), cx)
+        });
+        self.flags = data.flags;
+        self.engine = data.engine;
+        self.selected_match = None;
+        self.recompute(cx);
+    }
+
+    fn save_pattern(&mut self, _: &SavePattern, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.current.filter(|&id| self.library.get(id).is_some()) else {
+            self.start_naming(String::new(), window, cx);
+            return;
+        };
+        let data = self.current_data(cx);
+        match self.library.update(id, data) {
+            Ok(()) => {
+                let name = self
+                    .library
+                    .get(id)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                self.show_notice(format!("Saved “{name}”"), false, cx);
+            }
+            Err(err) => self.show_notice(err, true, cx),
+        }
+    }
+
+    fn save_pattern_as(&mut self, _: &SavePatternAs, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
+            .current
+            .and_then(|id| self.library.get(id))
+            .map(|entry| format!("{} copy", entry.name))
+            .unwrap_or_default();
+        self.start_naming(name, window, cx);
+    }
+
+    fn start_naming(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.library.load_error().is_some() {
+            self.show_library = true;
+            self.show_notice(
+                "Saving is disabled because the library file can't be read.".into(),
+                true,
+                cx,
+            );
+            return;
+        }
+        self.show_library = true;
+        self.naming = true;
+        self.pending_delete = None;
+        self.name_editor.update(cx, |editor, cx| {
+            editor.set_text(name, cx);
+            editor.select_all_text(cx);
+        });
+        window.focus(&self.name_editor.focus_handle(cx));
+        cx.notify();
+    }
+
+    fn confirm_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.name_editor.read(cx).text().trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let data = self.current_data(cx);
+        match self.library.add(name.clone(), data) {
+            Ok(id) => {
+                self.current = Some(id);
+                self.naming = false;
+                window.focus(&self.pattern.focus_handle(cx));
+                self.show_notice(format!("Saved “{name}”"), false, cx);
+            }
+            Err(err) => self.show_notice(err, true, cx),
+        }
+    }
+
+    fn cancel_naming(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.naming = false;
+        window.focus(&self.pattern.focus_handle(cx));
+        cx.notify();
+    }
+
+    fn load_entry(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(data) = self.library.get(id).map(|entry| entry.data.clone()) else {
+            return;
+        };
+        self.naming = false;
+        self.pending_delete = None;
+        self.current = Some(id);
+        self.apply(&data, cx);
+        window.focus(&self.pattern.focus_handle(cx));
+    }
+
+    fn delete_entry(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.pending_delete != Some(id) {
+            self.pending_delete = Some(id);
+            cx.notify();
+            return;
+        }
+        self.pending_delete = None;
+        let name = self
+            .library
+            .get(id)
+            .map(|e| e.name.clone())
+            .unwrap_or_default();
+        match self.library.remove(id) {
+            Ok(()) => {
+                if self.current == Some(id) {
+                    self.current = None;
+                }
+                self.show_notice(format!("Deleted “{name}”"), false, cx);
+            }
+            Err(err) => self.show_notice(err, true, cx),
+        }
+    }
+
+    fn new_pattern(&mut self, _: &NewPattern, window: &mut Window, cx: &mut Context<Self>) {
+        self.current = None;
+        self.naming = false;
+        self.apply(&PatternData::default(), cx);
+        window.focus(&self.pattern.focus_handle(cx));
+    }
+
+    fn toggle_library(&mut self, _: &ToggleLibrary, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_library = !self.show_library;
+        if !self.show_library && self.naming {
+            self.cancel_naming(window, cx);
+        }
+        cx.notify();
+    }
+}
+
 impl Focusable for Matcha {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -371,41 +604,234 @@ impl Matcha {
                     cx.listener(move |this, _: &ClickEvent, _, cx| this.set_engine(engine, cx)),
                 )
         };
+        let library_button = div()
+            .id("library-toggle")
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .rounded_lg()
+            .border_1()
+            .text_sm()
+            .cursor_pointer()
+            .when(self.show_library, |el| {
+                el.bg(theme.surface)
+                    .border_color(theme.accent)
+                    .text_color(theme.accent)
+            })
+            .when(!self.show_library, |el| {
+                el.border_color(theme.border)
+                    .hover(|el| el.bg(theme.surface))
+            })
+            .child("Library")
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(shortcut("⌘O", "Ctrl+O")),
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.toggle_library(&ToggleLibrary, window, cx)
+            }));
         div()
             .flex()
             .items_center()
             .justify_between()
             .child(
                 div()
-                    .flex()
-                    .items_baseline()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme.accent)
-                            .child("Matcha"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .child("regular expression workbench"),
-                    ),
+                    .text_lg()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.accent)
+                    .child("Matcha"),
             )
+            .child(
+                div().flex().gap_2().child(library_button).child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .p_1()
+                        .rounded_lg()
+                        .bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(engine_button(EngineKind::Standard, cx))
+                        .child(engine_button(EngineKind::Fancy, cx)),
+                ),
+            )
+    }
+
+    fn render_library(
+        &self,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .px_2()
+                .rounded_md()
+                .text_xs()
+                .cursor_pointer()
+                .text_color(theme.text_muted)
+                .hover(|el| el.bg(theme.border).text_color(theme.text))
+                .child(label)
+        };
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(section_label("LIBRARY", theme))
             .child(
                 div()
                     .flex()
                     .gap_1()
-                    .p_1()
-                    .rounded_lg()
+                    .child(button("library-new", "New").on_click(cx.listener(
+                        |this, _: &ClickEvent, window, cx| {
+                            this.new_pattern(&NewPattern, window, cx)
+                        },
+                    )))
+                    .child(button("library-save", "Save").on_click(cx.listener(
+                        |this, _: &ClickEvent, window, cx| {
+                            this.save_pattern(&SavePattern, window, cx)
+                        },
+                    ))),
+            );
+
+        let naming = self.naming.then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_1()
+                .child(editor_box(&self.name_editor, window, cx, theme))
+                .child(
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child("Enter to save · Esc to cancel"),
+                )
+        });
+
+        let entries = self.library.entries();
+        let empty = (entries.is_empty() && !self.naming && self.library.load_error().is_none())
+            .then(|| {
+                div()
+                    .p_2()
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .child(format!(
+                        "No saved patterns yet. Press {} to save the current one.",
+                        shortcut("⌘S", "Ctrl+S")
+                    ))
+            });
+
+        let rows = entries.iter().map(|entry| {
+            let id = entry.id;
+            let selected = self.current == Some(id);
+            let modified = selected && self.is_modified(&entry.data, cx);
+            let confirming = self.pending_delete == Some(id);
+            let pattern = if entry.data.pattern.is_empty() {
+                "(empty pattern)".to_owned()
+            } else {
+                preview(&entry.data.pattern)
+            };
+            div()
+                .id(("entry", id))
+                .group("entry")
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .py_1p5()
+                .rounded_md()
+                .cursor_pointer()
+                .when(selected, |el| el.bg(theme.background))
+                .when(!selected, |el| el.hover(|el| el.bg(theme.background)))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex()
+                                .gap_1()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(div().min_w_0().truncate().child(entry.name.clone()))
+                                .when(modified, |el| {
+                                    el.child(div().text_color(theme.accent).child("•"))
+                                }),
+                        )
+                        .child(
+                            div()
+                                .font_family(MONO_FONT)
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child(pattern),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(("delete", id))
+                        .flex_none()
+                        .px_1()
+                        .rounded_sm()
+                        .text_xs()
+                        .when(confirming, |el| {
+                            el.bg(theme.error).text_color(theme.surface).child("Delete")
+                        })
+                        .when(!confirming, |el| {
+                            el.text_color(theme.text_muted)
+                                .invisible()
+                                .group_hover("entry", |el| el.visible())
+                                .hover(|el| el.text_color(theme.error))
+                                .child("✕")
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.delete_entry(id, cx);
+                        })),
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.load_entry(id, window, cx)
+                }))
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w(px(240.))
+            .flex_none()
+            .min_h_0()
+            .child(header)
+            .child(
+                div()
+                    .id("library")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
                     .bg(theme.surface)
                     .border_1()
                     .border_color(theme.border)
-                    .child(engine_button(EngineKind::Standard, cx))
-                    .child(engine_button(EngineKind::Fancy, cx)),
+                    .rounded_md()
+                    .p_1()
+                    .children(naming)
+                    .children(empty)
+                    .children(rows),
             )
+            .children(self.library.load_error().map(|err| {
+                div()
+                    .text_xs()
+                    .text_color(theme.error)
+                    .child(err.to_owned())
+            }))
     }
 
     fn render_flags(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -651,7 +1077,10 @@ impl<'a> CharCounter<'a> {
 impl Render for Matcha {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.global::<Theme>();
-        let (status, status_is_error) = self.status_text();
+        let (status, status_is_error) = match &self.notice {
+            Some((notice, is_error)) => (notice.clone(), *is_error),
+            None => self.status_text(),
+        };
         let error = match &self.outcome {
             Outcome::Error(err) => Some(err.clone()),
             _ => None,
@@ -698,6 +1127,10 @@ impl Render for Matcha {
             .on_action(cx.listener(Self::toggle_replace))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
+            .on_action(cx.listener(Self::save_pattern))
+            .on_action(cx.listener(Self::save_pattern_as))
+            .on_action(cx.listener(Self::new_pattern))
+            .on_action(cx.listener(Self::toggle_library))
             .size_full()
             .flex()
             .flex_col()
@@ -740,6 +1173,9 @@ impl Render for Matcha {
                     .gap_3()
                     .flex_1()
                     .min_h_0()
+                    .when(self.show_library, |el| {
+                        el.child(self.render_library(window, &theme, cx))
+                    })
                     .child(
                         div()
                             .flex()
@@ -773,23 +1209,25 @@ impl Render for Matcha {
             .child(
                 div()
                     .flex()
+                    .gap_4()
                     .justify_between()
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
                             .when(status_is_error, |el| el.text_color(theme.error))
                             .child(status),
                     )
-                    .child(format!(
-                        "{} · {} to toggle replace",
+                    .child(div().flex_none().child(format!(
+                        "{} · {} save · {} library · {} replace",
                         self.engine.label(),
-                        if cfg!(target_os = "macos") {
-                            "⌘R"
-                        } else {
-                            "Ctrl+R"
-                        }
-                    )),
+                        shortcut("⌘S", "Ctrl+S"),
+                        shortcut("⌘O", "Ctrl+O"),
+                        shortcut("⌘R", "Ctrl+R"),
+                    ))),
             )
     }
 }

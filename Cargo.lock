@@ -3235,6 +3235,9 @@ dependencies = [
  "gpui",
  "log",
  "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

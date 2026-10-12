@@ -1,6 +1,7 @@
 mod app;
 mod editor;
 mod engine;
+mod library;
 mod theme;
 
 use gpui::{

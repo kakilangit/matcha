@@ -16,6 +16,7 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 - Flags: `i`, `m`, `s`, `x`, `u`
 - Two engines: [`regex`](https://crates.io/crates/regex) (linear time) and [`fancy-regex`](https://crates.io/crates/fancy-regex) (look-around, backreferences)
 - Clear error messages that point at the problem
+- Pattern library: save patterns with their sample text, replacement, flags, and engine
 - Light and dark themes; override with `MATCHA_THEME=light|dark`
 
 ## Build
@@ -39,12 +40,19 @@ cargo run --release
 
 > `Cargo.lock` pins `libc` to 0.2.189 because a GPUI dependency fails to build with 0.2.190 on Linux. Don't run `cargo update -p libc` yet.
 
+## Library
+
+Saved patterns live in `~/Library/Application Support/Matcha/library.json` on macOS and `~/.local/share/matcha/library.json` on Linux. Set `MATCHA_LIBRARY` to use another file.
+
 ## Shortcuts
 
 | Action           | macOS          | Linux                    |
 | ---------------- | -------------- | ------------------------ |
 | Focus pattern    | `⌘L`           | `Ctrl+L`                 |
 | Toggle replace   | `⌘R`           | `Ctrl+R`                 |
+| Save / save as   | `⌘S` / `⇧⌘S`   | `Ctrl+S` / `Ctrl+Shift+S` |
+| Library          | `⌘O`           | `Ctrl+O`                 |
+| New pattern      | `⌘N`           | `Ctrl+N`                 |
 | Next field       | `Tab`          | `Tab`                    |
 | Undo / redo      | `⌘Z` / `⇧⌘Z`   | `Ctrl+Z` / `Ctrl+Y`      |
 | Quit             | `⌘Q`           | `Ctrl+Q`                 |
@@ -54,7 +62,7 @@ cargo run --release
 - [x] Live matching, capture groups, replace preview
 - [x] Flags and two engines
 - [x] Light and dark themes
-- [ ] Pattern library
+- [x] Pattern library
 - [ ] Copy as code
 - [ ] Pattern explanation
 - [ ] Packaged releases
