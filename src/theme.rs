@@ -1,4 +1,8 @@
 //! Colors and fonts, chosen from the window's light or dark appearance.
+#![expect(
+    clippy::unreadable_literal,
+    reason = "colors are written as hex RRGGBB(AA) codes, like in CSS"
+)]
 
 use gpui::{Global, Hsla, WindowAppearance, rgb, rgba};
 

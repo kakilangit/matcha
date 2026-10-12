@@ -25,7 +25,7 @@ fn main() {
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.observe_keystrokes(|event, _, _| {
-            log::debug!("keystroke: {}", event.keystroke.unparse())
+            log::debug!("keystroke: {}", event.keystroke.unparse());
         })
         .detach();
         cx.set_menus(vec![Menu {
@@ -40,31 +40,35 @@ fn main() {
         .detach();
 
         let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Matcha".into()),
-                        ..Default::default()
-                    }),
-                    app_id: Some("dev.kakilangit.matcha".into()),
-                    window_min_size: Some(size(px(720.), px(480.))),
+        let window = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Matcha".into()),
                     ..Default::default()
-                },
-                |window, cx| {
-                    window
-                        .observe_window_appearance(|window, cx| {
-                            cx.set_global(Theme::for_appearance(window.appearance()));
-                            window.refresh();
-                        })
-                        .detach();
-                    cx.new(|cx| Matcha::new(window, cx))
-                },
-            )
-            .expect("failed to open the Matcha window");
-        window
-            .update(cx, |_, _, cx| cx.activate(true))
-            .expect("window was just opened");
+                }),
+                app_id: Some("dev.kakilangit.matcha".into()),
+                window_min_size: Some(size(px(720.), px(480.))),
+                ..Default::default()
+            },
+            |window, cx| {
+                window
+                    .observe_window_appearance(|window, cx| {
+                        cx.set_global(Theme::for_appearance(window.appearance()));
+                        window.refresh();
+                    })
+                    .detach();
+                cx.new(|cx| Matcha::new(window, cx))
+            },
+        );
+        match window {
+            Ok(window) => {
+                window.update(cx, |_, _, cx| cx.activate(true)).ok();
+            }
+            Err(err) => {
+                log::error!("could not open the Matcha window: {err:#}");
+                cx.quit();
+            }
+        }
     });
 }

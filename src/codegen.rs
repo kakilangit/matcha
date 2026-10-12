@@ -12,23 +12,31 @@ pub fn rust_snippet(pattern: &str, flags: Flags, engine: EngineKind, replacement
     let pattern = raw_string(pattern);
     let options = builder_options(flags, engine);
 
-    let mut code = if options.is_empty() {
-        format!("use {krate}::Regex;\n\nlet re = Regex::new({pattern}).unwrap();\n")
+    let mut lines = if options.is_empty() {
+        vec![
+            format!("use {krate}::Regex;"),
+            String::new(),
+            format!("let re = Regex::new({pattern}).unwrap();"),
+        ]
     } else {
-        let mut code =
-            format!("use {krate}::RegexBuilder;\n\nlet re = RegexBuilder::new({pattern})\n");
-        for option in options {
-            code.push_str(&format!("    .{option}\n"));
-        }
-        code.push_str("    .build()\n    .unwrap();\n");
-        code
+        let mut lines = vec![
+            format!("use {krate}::RegexBuilder;"),
+            String::new(),
+            format!("let re = RegexBuilder::new({pattern})"),
+        ];
+        lines.extend(options.iter().map(|option| format!("    .{option}")));
+        lines.push("    .build()".to_owned());
+        lines.push("    .unwrap();".to_owned());
+        lines
     };
     if !replacement.is_empty() {
-        code.push_str(&format!(
-            "let result = re.replace_all(text, {});\n",
+        lines.push(format!(
+            "let result = re.replace_all(text, {});",
             raw_string(replacement)
         ));
     }
+    let mut code = lines.join("\n");
+    code.push('\n');
     code
 }
 

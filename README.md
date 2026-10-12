@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icons/matcha-256.png" alt="Matcha icon" width="128">
+</p>
+
 # Matcha
 
 A native regex workbench for macOS and Linux, built with Rust and [GPUI](https://www.gpui.rs/). Matches, groups, and replacements update as you type.
@@ -37,10 +41,24 @@ Requires Rust stable ([rustup](https://rustup.rs/)).
 ```sh
 git clone https://github.com/kakilangit/matcha.git
 cd matcha
-cargo run --release
+make run
 ```
 
+Run `make` to list all targets.
+
 > `Cargo.lock` pins `libc` to 0.2.189 because a GPUI dependency fails to build with 0.2.190 on Linux. Don't run `cargo update -p libc` yet.
+
+## Packaging
+
+| Command         | Output                                   | Platform |
+| --------------- | ---------------------------------------- | -------- |
+| `make dmg`      | `dist/Matcha.app`, `dist/Matcha-<version>-<arch>.dmg` | macOS |
+| `make app`      | `dist/Matcha.app` only                   | macOS    |
+| `make appimage` | `dist/Matcha-<version>-<arch>.AppImage`  | Linux    |
+| `make install`  | binary, icon, and launcher entry under `PREFIX` (default `~/.local`) | Linux |
+
+- **macOS:** `UNIVERSAL=1 make dmg` builds for Apple silicon and Intel. Without `MACOS_SIGN_IDENTITY` the app is signed ad hoc, so other Macs will block it until it is signed with a Developer ID and notarized.
+- **Linux:** the AppImage needs `file` and downloads `appimagetool` 1.9.1 on first use. It uses the build machine's glibc, so build on the oldest distribution you want to support.
 
 ## Library
 
@@ -69,17 +87,18 @@ Saved patterns live in `~/Library/Application Support/Matcha/library.json` on ma
 - [x] Pattern library
 - [x] Copy as Rust code
 - [x] Pattern explanation
-- [ ] Packaged releases
+- [x] Packaging: `.dmg` and AppImage
+- [ ] Published releases built by CI
 
 ## Contributing
 
-Issues and pull requests are welcome. Before submitting:
+Issues and pull requests are welcome. Before submitting, run:
 
 ```sh
-cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test
+make ci
 ```
+
+This checks formatting and runs clippy with the pedantic lints, which also reject `unwrap`, `expect`, and `panic!` outside tests.
 
 ## License
 

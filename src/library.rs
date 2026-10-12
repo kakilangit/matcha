@@ -58,7 +58,7 @@ impl Library {
         match read_entries(path) {
             Ok(entries) => library.entries = entries,
             Err(err) => {
-                library.load_error = Some(format!("Could not read {}: {err}", path.display()))
+                library.load_error = Some(format!("Could not read {}: {err}", path.display()));
             }
         }
         library
@@ -179,7 +179,7 @@ mod tests {
     fn missing_file_is_an_empty_library() {
         let dir = tempfile::tempdir().unwrap();
         let library = Library::load(Some(dir.path().join("library.json")));
-        assert!(library.entries().is_empty());
+        assert_eq!(library.entries(), []);
         assert!(library.load_error().is_none());
     }
 

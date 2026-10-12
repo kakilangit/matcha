@@ -10,9 +10,9 @@ use gpui::{
 
 use crate::codegen;
 use crate::editor::{Editor, EditorEvent, Highlight};
-use crate::engine::{EngineKind, Flags, MATCH_LIMIT, Matches, Regex};
+use crate::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match, Matches, Regex};
 use crate::explain::{self, ExplainError, Part};
-use crate::library::{self, Library, PatternData};
+use crate::library::{self, Entry, Library, PatternData};
 use crate::theme::{MONO_FONT, Theme};
 
 actions!(
@@ -61,6 +61,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-c", CopyAsCode, ctx),
         KeyBinding::new("secondary-e", ToggleExplain, ctx),
     ]);
+}
+
+/// A short-lived message in the status bar.
+struct Notice {
+    text: String,
+    is_error: bool,
+    /// Clears the notice when it fires; dropped (and cancelled) with the notice.
+    _timer: Task<()>,
 }
 
 /// What the right-hand panel shows.
@@ -153,9 +161,7 @@ pub struct Matcha {
     naming: bool,
     /// Entry whose delete button was clicked once and awaits confirmation.
     pending_delete: Option<u64>,
-    /// Short-lived message in the status bar, and whether it is an error.
-    notice: Option<(String, bool)>,
-    _notice_task: Option<Task<()>>,
+    notice: Option<Notice>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -228,7 +234,6 @@ impl Matcha {
             naming: false,
             pending_delete: None,
             notice: None,
-            _notice_task: None,
             _subscriptions: subscriptions,
         };
         this.recompute(cx);
@@ -307,7 +312,7 @@ impl Matcha {
             }
         }
         self.sample.update(cx, |editor, cx| {
-            editor.set_highlights(highlights, markers, cx)
+            editor.set_highlights(highlights, markers, cx);
         });
     }
 
@@ -380,7 +385,7 @@ impl Matcha {
             .into_iter()
             .collect();
         self.pattern.update(cx, |editor, cx| {
-            editor.set_highlights(highlights, Vec::new(), cx)
+            editor.set_highlights(highlights, Vec::new(), cx);
         });
         cx.notify();
     }
@@ -418,25 +423,26 @@ impl Matcha {
         order
     }
 
-    fn cycle_focus(&self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+    fn cycle_focus(&self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let order = self.focus_order();
-        let current = order
+        let len = order.len();
+        let next = match order
             .iter()
-            .position(|editor| editor.focus_handle(cx).is_focused(window));
-        let len = order.len() as isize;
-        let next = match current {
-            Some(ix) => (ix as isize + step).rem_euclid(len) as usize,
+            .position(|editor| editor.focus_handle(cx).is_focused(window))
+        {
+            Some(ix) if forward => (ix + 1) % len,
+            Some(ix) => (ix + len - 1) % len,
             None => 0,
         };
         window.focus(&order[next].focus_handle(cx));
     }
 
     fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_focus(1, window, cx);
+        self.cycle_focus(true, window, cx);
     }
 
     fn focus_previous(&mut self, _: &FocusPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_focus(-1, window, cx);
+        self.cycle_focus(false, window, cx);
     }
 }
 
@@ -462,15 +468,20 @@ impl Matcha {
     }
 
     fn show_notice(&mut self, text: String, is_error: bool, cx: &mut Context<Self>) {
-        self.notice = Some((text, is_error));
-        self._notice_task = Some(cx.spawn(async move |this, cx| {
+        let timer = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(NOTICE_DURATION).await;
             this.update(cx, |this, cx| {
                 this.notice = None;
                 cx.notify();
             })
             .ok();
-        }));
+        });
+        // Replacing the notice drops the previous timer, which cancels it.
+        self.notice = Some(Notice {
+            text,
+            is_error,
+            _timer: timer,
+        });
         cx.notify();
     }
 
@@ -481,7 +492,7 @@ impl Matcha {
         self.sample
             .update(cx, |editor, cx| editor.set_text(data.sample.clone(), cx));
         self.replacement.update(cx, |editor, cx| {
-            editor.set_text(data.replacement.clone(), cx)
+            editor.set_text(data.replacement.clone(), cx);
         });
         self.flags = data.flags;
         self.engine = data.engine;
@@ -636,7 +647,7 @@ fn editor_box(editor: &Entity<Editor>, window: &Window, cx: &App, theme: &Theme)
             window.focus(&editor_handle.focus_handle(cx));
             // Keep the focusable window root from taking focus back.
             window.prevent_default();
-            editor_handle.update(cx, |editor, cx| editor.move_to_end(cx));
+            editor_handle.update(cx, super::editor::Editor::move_to_end);
         })
         .bg(theme.surface)
         .border_1()
@@ -651,6 +662,36 @@ fn editor_box(editor: &Entity<Editor>, window: &Window, cx: &App, theme: &Theme)
         .font_family(MONO_FONT)
         .text_sm()
         .child(editor.clone())
+}
+
+/// One capture group line under a match in the matches panel.
+fn render_group(group: &Group, text: &str, theme: &Theme) -> gpui::Div {
+    let label = match &group.name {
+        Some(name) => format!("{} {name}", group.index),
+        None => group.index.to_string(),
+    };
+    let value = match &group.range {
+        Some(range) => preview(&text[range.clone()]),
+        None => "(none)".to_string(),
+    };
+    div()
+        .flex()
+        .gap_2()
+        .pl_4()
+        .text_xs()
+        .child(
+            div()
+                .min_w(px(64.))
+                .text_color(theme.group)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label),
+        )
+        .child(
+            div()
+                .font_family(MONO_FONT)
+                .when(group.range.is_none(), |el| el.text_color(theme.text_muted))
+                .child(value),
+        )
 }
 
 /// Shows text on one line, making newlines and tabs visible and truncating long values.
@@ -723,7 +764,7 @@ impl Matcha {
                     .child(shortcut("⌘O", "Ctrl+O")),
             )
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.toggle_library(&ToggleLibrary, window, cx)
+                this.toggle_library(&ToggleLibrary, window, cx);
             }));
         div()
             .flex()
@@ -752,12 +793,7 @@ impl Matcha {
             )
     }
 
-    fn render_library(
-        &self,
-        window: &Window,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_library_header(theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let button = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
@@ -769,7 +805,7 @@ impl Matcha {
                 .hover(|el| el.bg(theme.border).text_color(theme.text))
                 .child(label)
         };
-        let header = div()
+        div()
             .flex()
             .items_center()
             .justify_between()
@@ -780,15 +816,104 @@ impl Matcha {
                     .gap_1()
                     .child(button("library-new", "New").on_click(cx.listener(
                         |this, _: &ClickEvent, window, cx| {
-                            this.new_pattern(&NewPattern, window, cx)
+                            this.new_pattern(&NewPattern, window, cx);
                         },
                     )))
                     .child(button("library-save", "Save").on_click(cx.listener(
                         |this, _: &ClickEvent, window, cx| {
-                            this.save_pattern(&SavePattern, window, cx)
+                            this.save_pattern(&SavePattern, window, cx);
                         },
                     ))),
-            );
+            )
+    }
+
+    fn render_library_entry(
+        &self,
+        entry: &Entry,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let id = entry.id;
+        let selected = self.current == Some(id);
+        let modified = selected && self.is_modified(&entry.data, cx);
+        let confirming = self.pending_delete == Some(id);
+        let pattern = if entry.data.pattern.is_empty() {
+            "(empty pattern)".to_owned()
+        } else {
+            preview(&entry.data.pattern)
+        };
+        div()
+            .id(("entry", id))
+            .group("entry")
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .cursor_pointer()
+            .when(selected, |el| el.bg(theme.background))
+            .when(!selected, |el| el.hover(|el| el.bg(theme.background)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(div().min_w_0().truncate().child(entry.name.clone()))
+                            .when(modified, |el| {
+                                el.child(div().text_color(theme.accent).child("•"))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .font_family(MONO_FONT)
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .truncate()
+                            .child(pattern),
+                    ),
+            )
+            .child(
+                div()
+                    .id(("delete", id))
+                    .flex_none()
+                    .px_1()
+                    .rounded_sm()
+                    .text_xs()
+                    .when(confirming, |el| {
+                        el.bg(theme.error).text_color(theme.surface).child("Delete")
+                    })
+                    .when(!confirming, |el| {
+                        el.text_color(theme.text_muted)
+                            .invisible()
+                            .group_hover("entry", gpui::Styled::visible)
+                            .hover(|el| el.text_color(theme.error))
+                            .child("✕")
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.delete_entry(id, cx);
+                    })),
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.load_entry(id, window, cx);
+            }))
+    }
+
+    fn render_library(
+        &self,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let header = Self::render_library_header(theme, cx);
 
         let naming = self.naming.then(|| {
             div()
@@ -819,80 +944,9 @@ impl Matcha {
                     ))
             });
 
-        let rows = entries.iter().map(|entry| {
-            let id = entry.id;
-            let selected = self.current == Some(id);
-            let modified = selected && self.is_modified(&entry.data, cx);
-            let confirming = self.pending_delete == Some(id);
-            let pattern = if entry.data.pattern.is_empty() {
-                "(empty pattern)".to_owned()
-            } else {
-                preview(&entry.data.pattern)
-            };
-            div()
-                .id(("entry", id))
-                .group("entry")
-                .flex()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .py_1p5()
-                .rounded_md()
-                .cursor_pointer()
-                .when(selected, |el| el.bg(theme.background))
-                .when(!selected, |el| el.hover(|el| el.bg(theme.background)))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex()
-                                .gap_1()
-                                .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(div().min_w_0().truncate().child(entry.name.clone()))
-                                .when(modified, |el| {
-                                    el.child(div().text_color(theme.accent).child("•"))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .font_family(MONO_FONT)
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .truncate()
-                                .child(pattern),
-                        ),
-                )
-                .child(
-                    div()
-                        .id(("delete", id))
-                        .flex_none()
-                        .px_1()
-                        .rounded_sm()
-                        .text_xs()
-                        .when(confirming, |el| {
-                            el.bg(theme.error).text_color(theme.surface).child("Delete")
-                        })
-                        .when(!confirming, |el| {
-                            el.text_color(theme.text_muted)
-                                .invisible()
-                                .group_hover("entry", |el| el.visible())
-                                .hover(|el| el.text_color(theme.error))
-                                .child("✕")
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.delete_entry(id, cx);
-                        })),
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.load_entry(id, window, cx)
-                }))
-        });
+        let rows = entries
+            .iter()
+            .map(|entry| self.render_library_entry(entry, theme, cx));
 
         div()
             .flex()
@@ -1018,7 +1072,11 @@ impl Matcha {
                         .gap_2()
                         .py_1()
                         .pr_2()
-                        .pl(px(8. + 14. * part.depth as f32))
+                        .pl(px(8.
+                            + 14.
+                                * f32::from(
+                                    u8::try_from(part.depth).unwrap_or(u8::MAX),
+                                )))
                         .rounded_md()
                         .when(hovered, |el| el.bg(theme.background))
                         .child(
@@ -1065,6 +1123,70 @@ impl Matcha {
             .child(body)
     }
 
+    fn render_match_row(
+        &self,
+        ix: usize,
+        m: &Match,
+        text: &str,
+        span: String,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let selected = self.selected_match == Some(ix);
+        let match_text = if m.range.is_empty() {
+            "(empty)".to_string()
+        } else {
+            preview(&text[m.range.clone()])
+        };
+        div()
+            .id(("match", ix))
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .cursor_pointer()
+            .when(selected, |el| el.bg(theme.match_selected))
+            .when(!selected, |el| el.hover(|el| el.bg(theme.background)))
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .items_baseline()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(format!("#{}", ix + 1)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(MONO_FONT)
+                            .text_sm()
+                            .child(match_text),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(span),
+                    ),
+            )
+            .children(
+                m.groups
+                    .iter()
+                    .map(|group| render_group(group, text, theme)),
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.select_match(ix, cx);
+            }))
+    }
+
     fn render_matches(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.sample.read(cx).text().to_owned();
         let body: AnyElement = match &self.outcome {
@@ -1091,7 +1213,6 @@ impl Matcha {
                     .take(LISTED_MATCHES)
                     .enumerate()
                     .map(|(ix, m)| {
-                        let selected = self.selected_match == Some(ix);
                         let byte_span = format!("{}–{}", m.range.start, m.range.end);
                         let char_span =
                             (chars.count_to(m.range.start), chars.count_to(m.range.end));
@@ -1100,83 +1221,7 @@ impl Matcha {
                         } else {
                             format!("{byte_span} (chars {}–{})", char_span.0, char_span.1)
                         };
-                        let match_text = if m.range.is_empty() {
-                            "(empty)".to_string()
-                        } else {
-                            preview(&text[m.range.clone()])
-                        };
-                        div()
-                            .id(("match", ix))
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .px_2()
-                            .py_1p5()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .when(selected, |el| el.bg(theme.match_selected))
-                            .when(!selected, |el| el.hover(|el| el.bg(theme.background)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .items_baseline()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.text_muted)
-                                            .child(format!("#{}", ix + 1)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .font_family(MONO_FONT)
-                                            .text_sm()
-                                            .child(match_text),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .text_xs()
-                                            .text_color(theme.text_muted)
-                                            .child(span),
-                                    ),
-                            )
-                            .children(m.groups.iter().map(|group| {
-                                let label = match &group.name {
-                                    Some(name) => format!("{} {name}", group.index),
-                                    None => group.index.to_string(),
-                                };
-                                let value = match &group.range {
-                                    Some(range) => preview(&text[range.clone()]),
-                                    None => "(none)".to_string(),
-                                };
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .pl_4()
-                                    .text_xs()
-                                    .child(
-                                        div()
-                                            .min_w(px(64.))
-                                            .text_color(theme.group)
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(label),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(MONO_FONT)
-                                            .when(group.range.is_none(), |el| {
-                                                el.text_color(theme.text_muted)
-                                            })
-                                            .child(value),
-                                    )
-                            }))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.select_match(ix, cx)
-                            }))
+                        self.render_match_row(ix, m, &text, span, theme, cx)
                     });
                 let hidden = found.matches.len().saturating_sub(LISTED_MATCHES);
                 div()
@@ -1216,23 +1261,17 @@ impl Matcha {
             Outcome::Empty => ("No pattern".into(), false),
             Outcome::Error(_) => ("Invalid pattern".into(), true),
             Outcome::Found(found) => {
-                let count = found.matches.len();
-                let mut status = match count {
-                    1 => "1 match".to_string(),
-                    _ => format!("{count} matches"),
-                };
-                if found.truncated {
-                    status = format!("Showing the first {MATCH_LIMIT} matches");
+                let mut parts = vec![match found.matches.len() {
+                    _ if found.truncated => format!("Showing the first {MATCH_LIMIT} matches"),
+                    1 => "1 match".to_owned(),
+                    count => format!("{count} matches"),
+                }];
+                match found.matches.first().map_or(0, |m| m.groups.len()) {
+                    0 => {}
+                    1 => parts.push("1 group".to_owned()),
+                    groups => parts.push(format!("{groups} groups")),
                 }
-                if let Some(group_count) = found.matches.first().map(|m| m.groups.len())
-                    && group_count > 0
-                {
-                    status.push_str(&format!(
-                        " · {group_count} group{}",
-                        if group_count == 1 { "" } else { "s" }
-                    ));
-                }
-                (status, false)
+                (parts.join(" · "), false)
             }
         }
     }
@@ -1268,25 +1307,87 @@ impl<'a> CharCounter<'a> {
     }
 }
 
-impl Render for Matcha {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = *cx.global::<Theme>();
-        let (status, status_is_error) = match &self.notice {
-            Some((notice, is_error)) => (notice.clone(), *is_error),
-            None => self.status_text(),
-        };
+/// The main window's sections, top to bottom.
+impl Matcha {
+    fn render_pattern_section(
+        &self,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let copy_button = div()
+            .id("copy-as-code")
+            .px_2()
+            .rounded_md()
+            .text_xs()
+            .cursor_pointer()
+            .text_color(theme.text_muted)
+            .hover(|el| el.bg(theme.border).text_color(theme.text))
+            .child(format!("Copy as Rust  {}", shortcut("⇧⌘C", "Ctrl+Shift+C")))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.copy_as_code(&CopyAsCode, window, cx);
+            }));
         let error = match &self.outcome {
-            Outcome::Error(err) => Some(err.clone()),
+            Outcome::Error(err) => Some(
+                div()
+                    .font_family(MONO_FONT)
+                    .text_xs()
+                    .text_color(theme.error)
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(theme.surface)
+                    .border_1()
+                    .border_color(theme.error)
+                    .child(err.clone()),
+            ),
             _ => None,
         };
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(section_label("PATTERN", theme))
+                            .child(copy_button),
+                    )
+                    .child(self.render_flags(theme, cx)),
+            )
+            .child(editor_box(&self.pattern, window, cx, theme))
+            .children(error)
+    }
 
-        let sample_box = editor_box(&self.sample, window, cx, &theme)
+    /// Sample text, and below it the replacement and its result.
+    fn render_editors(&self, window: &Window, theme: &Theme, cx: &App) -> impl IntoElement {
+        let sample_box = editor_box(&self.sample, window, cx, theme)
             .id("sample")
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.sample_scroll);
-
+        let result: AnyElement = match &self.replace_error {
+            Some(err) => div()
+                .text_sm()
+                .text_color(theme.error)
+                .child(err.clone())
+                .into_any_element(),
+            None => editor_box(&self.result, window, cx, theme)
+                .id("result")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&self.result_scroll)
+                .into_any_element(),
+        };
         let replace_section = self.show_replace.then(|| {
             div()
                 .flex()
@@ -1294,26 +1395,95 @@ impl Render for Matcha {
                 .gap_1()
                 .flex_1()
                 .min_h_0()
-                .child(section_label("REPLACEMENT", &theme))
-                .child(editor_box(&self.replacement, window, cx, &theme))
+                .child(section_label("REPLACEMENT", theme))
+                .child(editor_box(&self.replacement, window, cx, theme))
                 .child(div().h_1())
-                .child(section_label("RESULT", &theme))
-                .child(match &self.replace_error {
-                    Some(err) => div()
-                        .text_sm()
-                        .text_color(theme.error)
-                        .child(err.clone())
-                        .into_any_element(),
-                    None => editor_box(&self.result, window, cx, &theme)
-                        .id("result")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.result_scroll)
-                        .into_any_element(),
-                })
+                .child(section_label("RESULT", theme))
+                .child(result)
         });
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .flex_1()
+            .min_w_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .flex_1()
+                    .min_h_0()
+                    .child(section_label("SAMPLE TEXT", theme))
+                    .child(sample_box),
+            )
+            .children(replace_section)
+    }
 
+    /// Library sidebar (when open), editors, and the matches/explain panel.
+    fn render_workspace(
+        &self,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let panel = match self.panel {
+            Panel::Matches => self.render_matches(theme, cx).into_any_element(),
+            Panel::Explain => self.render_explain(theme, cx).into_any_element(),
+        };
+        div()
+            .flex()
+            .gap_3()
+            .flex_1()
+            .min_h_0()
+            .when(self.show_library, |el| {
+                el.child(self.render_library(window, theme, cx))
+            })
+            .child(self.render_editors(window, theme, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .w(px(340.))
+                    .min_h_0()
+                    .child(self.render_panel_tabs(theme, cx))
+                    .child(panel),
+            )
+    }
+
+    fn render_status_bar(&self, theme: &Theme) -> impl IntoElement {
+        let (status, is_error) = match &self.notice {
+            Some(notice) => (notice.text.clone(), notice.is_error),
+            None => self.status_text(),
+        };
+        div()
+            .flex()
+            .gap_4()
+            .justify_between()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .when(is_error, |el| el.text_color(theme.error))
+                    .child(status),
+            )
+            .child(div().flex_none().child(format!(
+                "{} · {} save · {} library · {} replace",
+                self.engine.label(),
+                shortcut("⌘S", "Ctrl+S"),
+                shortcut("⌘O", "Ctrl+O"),
+                shortcut("⌘R", "Ctrl+R"),
+            )))
+    }
+}
+
+impl Render for Matcha {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = *cx.global::<Theme>();
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
@@ -1335,127 +1505,8 @@ impl Render for Matcha {
             .bg(theme.background)
             .text_color(theme.text)
             .child(self.render_header(&theme, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(section_label("PATTERN", &theme))
-                                    .child(
-                                        div()
-                                            .id("copy-as-code")
-                                            .px_2()
-                                            .rounded_md()
-                                            .text_xs()
-                                            .cursor_pointer()
-                                            .text_color(theme.text_muted)
-                                            .hover(|el| el.bg(theme.border).text_color(theme.text))
-                                            .child(format!(
-                                                "Copy as Rust  {}",
-                                                shortcut("⇧⌘C", "Ctrl+Shift+C")
-                                            ))
-                                            .on_click(cx.listener(
-                                                |this, _: &ClickEvent, window, cx| {
-                                                    this.copy_as_code(&CopyAsCode, window, cx)
-                                                },
-                                            )),
-                                    ),
-                            )
-                            .child(self.render_flags(&theme, cx)),
-                    )
-                    .child(editor_box(&self.pattern, window, cx, &theme))
-                    .children(error.map(|err| {
-                        div()
-                            .font_family(MONO_FONT)
-                            .text_xs()
-                            .text_color(theme.error)
-                            .px_3()
-                            .py_2()
-                            .rounded_md()
-                            .bg(theme.surface)
-                            .border_1()
-                            .border_color(theme.error)
-                            .child(err)
-                    })),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .flex_1()
-                    .min_h_0()
-                    .when(self.show_library, |el| {
-                        el.child(self.render_library(window, &theme, cx))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .child(section_label("SAMPLE TEXT", &theme))
-                                    .child(sample_box),
-                            )
-                            .children(replace_section),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .w(px(340.))
-                            .min_h_0()
-                            .child(self.render_panel_tabs(&theme, cx))
-                            .child(match self.panel {
-                                Panel::Matches => {
-                                    self.render_matches(&theme, cx).into_any_element()
-                                }
-                                Panel::Explain => {
-                                    self.render_explain(&theme, cx).into_any_element()
-                                }
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_4()
-                    .justify_between()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .when(status_is_error, |el| el.text_color(theme.error))
-                            .child(status),
-                    )
-                    .child(div().flex_none().child(format!(
-                        "{} · {} save · {} library · {} replace",
-                        self.engine.label(),
-                        shortcut("⌘S", "Ctrl+S"),
-                        shortcut("⌘O", "Ctrl+O"),
-                        shortcut("⌘R", "Ctrl+R"),
-                    ))),
-            )
+            .child(self.render_pattern_section(window, &theme, cx))
+            .child(self.render_workspace(window, &theme, cx))
+            .child(self.render_status_bar(&theme))
     }
 }

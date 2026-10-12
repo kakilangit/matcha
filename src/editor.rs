@@ -131,13 +131,20 @@ struct Snapshot {
     selected_range: Range<usize>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    MultiLine,
+    /// Enter submits instead of inserting a newline, and pasted newlines become spaces.
+    SingleLine,
+    /// Text can be selected and copied but not edited.
+    ReadOnly,
+}
+
 pub struct Editor {
     focus_handle: FocusHandle,
     content: String,
     placeholder: SharedString,
-    read_only: bool,
-    /// Enter submits instead of inserting a newline, and pasted newlines become spaces.
-    single_line: bool,
+    mode: Mode,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -169,8 +176,7 @@ impl Editor {
             focus_handle: cx.focus_handle(),
             content: String::new(),
             placeholder: SharedString::default(),
-            read_only: false,
-            single_line: false,
+            mode: Mode::MultiLine,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -192,13 +198,17 @@ impl Editor {
     }
 
     pub fn read_only(mut self) -> Self {
-        self.read_only = true;
+        self.mode = Mode::ReadOnly;
         self
     }
 
     pub fn single_line(mut self) -> Self {
-        self.single_line = true;
+        self.mode = Mode::SingleLine;
         self
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.mode == Mode::ReadOnly
     }
 
     /// Selects all text, so typing replaces it.
@@ -503,15 +513,11 @@ impl Editor {
     }
 
     fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
-        if self.single_line {
+        if self.mode == Mode::SingleLine {
             cx.emit(EditorEvent::Submit);
         } else {
             self.replace_text_in_range(None, "\n", window, cx);
         }
-    }
-
-    fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(EditorEvent::Cancel);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -523,7 +529,7 @@ impl Editor {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() && !self.read_only {
+        if !self.selected_range.is_empty() && !self.is_read_only() {
             self.copy(&Copy, window, cx);
             self.replace_text_in_range(None, "", window, cx);
         }
@@ -533,7 +539,7 @@ impl Editor {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.typing_at = None;
             let mut text = text.replace("\r\n", "\n");
-            if self.single_line {
+            if self.mode == Mode::SingleLine {
                 text = text.replace('\n', " ");
             }
             self.replace_text_in_range(None, &text, window, cx);
@@ -560,7 +566,7 @@ impl Editor {
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.is_read_only() {
             return;
         }
         if let Some(snapshot) = self.undo_stack.pop() {
@@ -570,7 +576,7 @@ impl Editor {
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.is_read_only() {
             return;
         }
         if let Some(snapshot) = self.redo_stack.pop() {
@@ -736,7 +742,7 @@ impl EntityInputHandler for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.read_only {
+        if self.is_read_only() {
             return;
         }
         let range = range_utf16
@@ -759,7 +765,7 @@ impl EntityInputHandler for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.read_only {
+        if self.is_read_only() {
             return;
         }
         let range = range_utf16
@@ -774,8 +780,10 @@ impl EntityInputHandler for Editor {
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.start)
-            .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+            .map_or_else(
+                || range.start + new_text.len()..range.start + new_text.len(),
+                |new_range| new_range.start + range.start..new_range.end + range.start,
+            );
         self.selection_reversed = false;
     }
 
@@ -836,12 +844,12 @@ impl Render for Editor {
             .on_action(cx.listener(Self::document_end))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::copy))
-            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(|_, _: &Cancel, _, cx| cx.emit(EditorEvent::Cancel)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move));
-        if !self.read_only {
+        if !self.is_read_only() {
             root = root
                 .on_action(cx.listener(Self::backspace))
                 .on_action(cx.listener(Self::delete))
@@ -873,6 +881,40 @@ struct EditorLayout {
 }
 
 impl EditorLayout {
+    fn new(
+        wrapped: impl IntoIterator<Item = WrappedLine>,
+        bounds: Bounds<Pixels>,
+        line_height: Pixels,
+    ) -> Self {
+        let mut lines = Vec::new();
+        let mut start = 0;
+        let mut y = Pixels::ZERO;
+        for line in wrapped {
+            let len = line.len();
+            let height = line.size(line_height).height;
+            lines.push(LineLayout { start, line, y });
+            start += len + 1;
+            y += height;
+        }
+        Self {
+            lines,
+            bounds,
+            line_height,
+        }
+    }
+
+    /// Indices of the lines that intersect `viewport` (in window coordinates).
+    fn visible_lines(&self, viewport: Bounds<Pixels>) -> Range<usize> {
+        let top = self.bounds.top();
+        let first = self.lines.partition_point(|line| {
+            top + line.y + self.line_height_of(&line.line) < viewport.top()
+        });
+        let last = self
+            .lines
+            .partition_point(|line| top + line.y <= viewport.bottom());
+        first..last.max(first)
+    }
+
     fn line_height_of(&self, line: &WrappedLine) -> Pixels {
         line.size(self.line_height).height
     }
@@ -1041,81 +1083,14 @@ impl Element for EditorElement {
             .shape_text(text, font_size, &runs, Some(bounds.size.width), None)
             .unwrap_or_default();
 
-        let mut lines = Vec::with_capacity(wrapped.len());
-        let mut start = 0;
-        let mut y = Pixels::ZERO;
-        for line in wrapped {
-            let len = line.len();
-            let height = line.size(line_height).height;
-            lines.push(LineLayout { start, line, y });
-            start += len + 1;
-            y += height;
-        }
-        let layout = EditorLayout {
-            lines,
-            bounds,
-            line_height,
-        };
-
+        let layout = EditorLayout::new(wrapped, bounds, line_height);
         // Large samples have thousands of lines; only those in the viewport are painted.
-        let viewport = window.content_mask().bounds;
-        let first = layout.lines.partition_point(|line| {
-            bounds.top() + line.y + layout.line_height_of(&line.line) < viewport.top()
-        });
-        let last = layout
-            .lines
-            .partition_point(|line| bounds.top() + line.y <= viewport.bottom());
-        let visible = first..last.max(first);
-
-        let mut highlights = Vec::new();
-        let mut selection = Vec::new();
-        let mut markers = Vec::new();
-        if !editor.content.is_empty() {
-            for line in &layout.lines[visible.clone()] {
-                let line_end = line.start + line.line.len();
-                let first_highlight = editor
-                    .highlights
-                    .partition_point(|highlight| highlight.range.end <= line.start);
-                for highlight in editor.highlights[first_highlight..]
-                    .iter()
-                    .take_while(|highlight| highlight.range.start <= line_end)
-                {
-                    line_range_quads(
-                        &layout,
-                        line,
-                        &highlight.range,
-                        highlight.color,
-                        &mut highlights,
-                    );
-                }
-                line_range_quads(
-                    &layout,
-                    line,
-                    &editor.selected_range,
-                    theme.selection,
-                    &mut selection,
-                );
-                let first_marker = editor
-                    .markers
-                    .partition_point(|&offset| offset < line.start);
-                for &offset in editor.markers[first_marker..]
-                    .iter()
-                    .take_while(|&&offset| offset <= line_end)
-                {
-                    let position = line
-                        .line
-                        .position_for_index(offset - line.start, line_height)
-                        .unwrap_or_default();
-                    markers.push(fill(
-                        Bounds::new(
-                            bounds.origin + point(position.x - px(1.), line.y + position.y),
-                            size(px(2.), line_height),
-                        ),
-                        theme.empty_match,
-                    ));
-                }
-            }
-        }
+        let visible = layout.visible_lines(window.content_mask().bounds);
+        let decorations = if editor.content.is_empty() {
+            Decorations::default()
+        } else {
+            Decorations::new(editor, &layout, visible.clone(), &theme)
+        };
 
         let cursor = editor.selected_range.is_empty().then(|| {
             let position = if editor.content.is_empty() {
@@ -1133,9 +1108,9 @@ impl Element for EditorElement {
         PrepaintState {
             layout: Some(layout),
             visible,
-            highlights,
-            selection,
-            markers,
+            highlights: decorations.highlights,
+            selection: decorations.selection,
+            markers: decorations.markers,
             cursor,
         }
     }
@@ -1152,7 +1127,7 @@ impl Element for EditorElement {
     ) {
         let editor = self.editor.read(cx);
         let focus_handle = editor.focus_handle.clone();
-        let read_only = editor.read_only;
+        let read_only = editor.is_read_only();
         let scroll_handle = editor.scroll_handle.clone();
         let autoscroll = editor.autoscroll;
         if !read_only {
@@ -1163,10 +1138,9 @@ impl Element for EditorElement {
             );
         }
 
-        let layout = prepaint
-            .layout
-            .take()
-            .expect("prepaint always produces a layout");
+        let Some(layout) = prepaint.layout.take() else {
+            return;
+        };
         let line_height = layout.line_height;
         for quad in prepaint
             .highlights
@@ -1193,11 +1167,14 @@ impl Element for EditorElement {
 
         if autoscroll && let Some(handle) = scroll_handle {
             let viewport = handle.bounds();
-            let target = cursor.map(|quad| quad.bounds).unwrap_or_else(|| {
-                let editor = self.editor.read(cx);
-                let position = layout.position_for_offset(editor.cursor_offset());
-                Bounds::new(bounds.origin + position, size(px(2.), line_height))
-            });
+            let target = cursor.map_or_else(
+                || {
+                    let editor = self.editor.read(cx);
+                    let position = layout.position_for_offset(editor.cursor_offset());
+                    Bounds::new(bounds.origin + position, size(px(2.), line_height))
+                },
+                |quad| quad.bounds,
+            );
             let mut offset = handle.offset();
             if target.bottom() > viewport.bottom() {
                 offset.y -= target.bottom() - viewport.bottom();
@@ -1214,6 +1191,65 @@ impl Element for EditorElement {
             editor.last_layout = Some(layout);
             editor.autoscroll = false;
         });
+    }
+}
+
+/// Quads drawn under and over the text of the visible lines.
+#[derive(Default)]
+struct Decorations {
+    highlights: Vec<PaintQuad>,
+    selection: Vec<PaintQuad>,
+    markers: Vec<PaintQuad>,
+}
+
+impl Decorations {
+    fn new(editor: &Editor, layout: &EditorLayout, visible: Range<usize>, theme: &Theme) -> Self {
+        let mut decorations = Self::default();
+        for line in &layout.lines[visible] {
+            let line_end = line.start + line.line.len();
+            let first_highlight = editor
+                .highlights
+                .partition_point(|highlight| highlight.range.end <= line.start);
+            for highlight in editor.highlights[first_highlight..]
+                .iter()
+                .take_while(|highlight| highlight.range.start <= line_end)
+            {
+                line_range_quads(
+                    layout,
+                    line,
+                    &highlight.range,
+                    highlight.color,
+                    &mut decorations.highlights,
+                );
+            }
+            line_range_quads(
+                layout,
+                line,
+                &editor.selected_range,
+                theme.selection,
+                &mut decorations.selection,
+            );
+            let first_marker = editor
+                .markers
+                .partition_point(|&offset| offset < line.start);
+            for &offset in editor.markers[first_marker..]
+                .iter()
+                .take_while(|&&offset| offset <= line_end)
+            {
+                let position = line
+                    .line
+                    .position_for_index(offset - line.start, layout.line_height)
+                    .unwrap_or_default();
+                decorations.markers.push(fill(
+                    Bounds::new(
+                        layout.bounds.origin + point(position.x - px(1.), line.y + position.y),
+                        size(px(2.), layout.line_height),
+                    ),
+                    theme.empty_match,
+                ));
+            }
+        }
+        decorations
     }
 }
 

@@ -322,8 +322,7 @@ fn describe_perl(kind: &ClassPerlKind, negated: bool) -> &'static str {
 fn describe_unicode(class: &ast::ClassUnicode) -> String {
     let name = match &class.kind {
         ClassUnicodeKind::OneLetter(letter) => unicode_letter_name(*letter)
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("Unicode class {letter}")),
+            .map_or_else(|| format!("Unicode class {letter}"), str::to_owned),
         ClassUnicodeKind::Named(name) => format!("Unicode {name}"),
         ClassUnicodeKind::NamedValue { name, value, .. } => format!("Unicode {name}={value}"),
     };
@@ -384,9 +383,9 @@ fn describe_flags(items: &[ast::FlagsItem]) -> String {
                     Flag::IgnoreWhitespace => "ignore whitespace",
                 };
                 if negated {
-                    off.push(name)
+                    off.push(name);
                 } else {
-                    on.push(name)
+                    on.push(name);
                 }
             }
         }

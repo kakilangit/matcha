@@ -29,6 +29,10 @@ impl EngineKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per regex builder option, stored as-is in the library file"
+)]
 pub struct Flags {
     pub case_insensitive: bool,
     pub multi_line: bool,
@@ -141,7 +145,8 @@ impl Regex {
         match self {
             Regex::Standard(re) => {
                 for caps in re.captures_iter(text) {
-                    let whole = caps.get(0).expect("group 0 always participates");
+                    // Group 0 is the whole match and is always present.
+                    let Some(whole) = caps.get(0) else { continue };
                     let groups = (1..caps.len())
                         .map(|ix| caps.get(ix).map(|m| m.range()))
                         .collect();
@@ -153,7 +158,8 @@ impl Regex {
             Regex::Fancy(re) => {
                 for caps in re.captures_iter(text) {
                     let caps = caps.map_err(|err| err.to_string())?;
-                    let whole = caps.get(0).expect("group 0 always participates");
+                    // Group 0 is the whole match and is always present.
+                    let Some(whole) = caps.get(0) else { continue };
                     let groups = (1..caps.len())
                         .map(|ix| caps.get(ix).map(|m| m.start()..m.end()))
                         .collect();
@@ -173,7 +179,8 @@ impl Regex {
         match self {
             Regex::Standard(re) => {
                 for caps in re.captures_iter(text) {
-                    let whole = caps.get(0).expect("group 0 always participates");
+                    // Group 0 is the whole match and is always present.
+                    let Some(whole) = caps.get(0) else { continue };
                     out.push_str(&text[last..whole.start()]);
                     caps.expand(template, &mut out);
                     last = whole.end();
@@ -182,7 +189,8 @@ impl Regex {
             Regex::Fancy(re) => {
                 for caps in re.captures_iter(text) {
                     let caps = caps.map_err(|err| err.to_string())?;
-                    let whole = caps.get(0).expect("group 0 always participates");
+                    // Group 0 is the whole match and is always present.
+                    let Some(whole) = caps.get(0) else { continue };
                     out.push_str(&text[last..whole.start()]);
                     caps.expand(template, &mut out);
                     last = whole.end();
