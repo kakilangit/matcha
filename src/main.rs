@@ -2,6 +2,7 @@ mod app;
 mod codegen;
 mod editor;
 mod engine;
+mod explain;
 mod library;
 mod theme;
 

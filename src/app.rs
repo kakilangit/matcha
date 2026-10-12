@@ -11,6 +11,7 @@ use gpui::{
 use crate::codegen;
 use crate::editor::{Editor, EditorEvent, Highlight};
 use crate::engine::{EngineKind, Flags, MATCH_LIMIT, Matches, Regex};
+use crate::explain::{self, ExplainError, Part};
 use crate::library::{self, Library, PatternData};
 use crate::theme::{MONO_FONT, Theme};
 
@@ -26,6 +27,7 @@ actions!(
         NewPattern,
         ToggleLibrary,
         CopyAsCode,
+        ToggleExplain,
     ]
 );
 
@@ -57,7 +59,15 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-n", NewPattern, ctx),
         KeyBinding::new("secondary-o", ToggleLibrary, ctx),
         KeyBinding::new("secondary-shift-c", CopyAsCode, ctx),
+        KeyBinding::new("secondary-e", ToggleExplain, ctx),
     ]);
+}
+
+/// What the right-hand panel shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Panel {
+    Matches,
+    Explain,
 }
 
 enum Outcome {
@@ -130,6 +140,10 @@ pub struct Matcha {
     outcome: Outcome,
     replace_error: Option<String>,
     selected_match: Option<usize>,
+    panel: Panel,
+    explanation: Result<Vec<Part>, ExplainError>,
+    /// Explanation part under the mouse, highlighted in the pattern.
+    hovered_part: Option<usize>,
     library: Library,
     /// The library entry the workbench was loaded from or last saved to.
     current: Option<u64>,
@@ -204,6 +218,9 @@ impl Matcha {
             outcome: Outcome::Empty,
             replace_error: None,
             selected_match: None,
+            panel: Panel::Matches,
+            explanation: Ok(Vec::new()),
+            hovered_part: None,
             library,
             current: None,
             show_library,
@@ -250,6 +267,13 @@ impl Matcha {
         };
         self.result
             .update(cx, |editor, cx| editor.set_text(replaced, cx));
+
+        let pattern = self.pattern.read(cx).text();
+        let explanation = explain::explain(pattern, self.flags);
+        if explanation != self.explanation {
+            self.explanation = explanation;
+            self.set_hovered_part(None, cx);
+        }
 
         if let (Some(ix), Outcome::Found(found)) = (self.selected_match, &self.outcome)
             && ix >= found.matches.len()
@@ -324,6 +348,41 @@ impl Matcha {
             window.focus(&self.pattern.focus_handle(cx));
         }
         self.recompute(cx);
+    }
+
+    fn toggle_explain(&mut self, _: &ToggleExplain, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_panel(
+            match self.panel {
+                Panel::Matches => Panel::Explain,
+                Panel::Explain => Panel::Matches,
+            },
+            cx,
+        );
+    }
+
+    fn set_panel(&mut self, panel: Panel, cx: &mut Context<Self>) {
+        self.panel = panel;
+        self.set_hovered_part(None, cx);
+        cx.notify();
+    }
+
+    /// Highlights the hovered explanation part in the pattern editor.
+    fn set_hovered_part(&mut self, part: Option<usize>, cx: &mut Context<Self>) {
+        self.hovered_part = part;
+        let theme = *cx.global::<Theme>();
+        let highlights = part
+            .and_then(|ix| self.explanation.as_ref().ok()?.get(ix))
+            .filter(|part| !part.span.is_empty())
+            .map(|part| Highlight {
+                range: part.span.clone(),
+                color: theme.match_selected,
+            })
+            .into_iter()
+            .collect();
+        self.pattern.update(cx, |editor, cx| {
+            editor.set_highlights(highlights, Vec::new(), cx)
+        });
+        cx.notify();
     }
 
     fn copy_as_code(&mut self, _: &CopyAsCode, _: &mut Window, cx: &mut Context<Self>) {
@@ -596,9 +655,13 @@ fn editor_box(editor: &Entity<Editor>, window: &Window, cx: &App, theme: &Theme)
 
 /// Shows text on one line, making newlines and tabs visible and truncating long values.
 fn preview(text: &str) -> String {
+    preview_chars(text, PREVIEW_CHARS)
+}
+
+fn preview_chars(text: &str, limit: usize) -> String {
     let mut out = String::new();
     for (ix, ch) in text.chars().enumerate() {
-        if ix == PREVIEW_CHARS {
+        if ix == limit {
             out.push('…');
             break;
         }
@@ -899,6 +962,109 @@ impl Matcha {
         }))
     }
 
+    fn render_panel_tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let tab = |panel: Panel, label: &'static str, cx: &mut Context<Self>| {
+            let active = self.panel == panel;
+            div()
+                .id(label)
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .cursor_pointer()
+                .text_color(if active { theme.text } else { theme.text_muted })
+                .when(active, |el| el.border_b_1().border_color(theme.accent))
+                .when(!active, |el| el.hover(|el| el.text_color(theme.text)))
+                .child(label)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_panel(panel, cx)))
+        };
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(tab(Panel::Matches, "MATCHES", cx))
+                    .child(tab(Panel::Explain, "EXPLAIN", cx)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(shortcut("⌘E", "Ctrl+E")),
+            )
+    }
+
+    fn render_explain(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let pattern = self.pattern.read(cx).text();
+        let message = |text: &'static str| {
+            div()
+                .text_sm()
+                .text_color(theme.text_muted)
+                .child(text)
+                .into_any_element()
+        };
+        let body: AnyElement = match &self.explanation {
+            Ok(parts) if parts.is_empty() => message("Enter a pattern to see it explained."),
+            Ok(parts) => div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .children(parts.iter().enumerate().map(|(ix, part)| {
+                    let hovered = self.hovered_part == Some(ix);
+                    div()
+                        .id(("part", ix))
+                        .flex()
+                        .gap_2()
+                        .py_1()
+                        .pr_2()
+                        .pl(px(8. + 14. * part.depth as f32))
+                        .rounded_md()
+                        .when(hovered, |el| el.bg(theme.background))
+                        .child(
+                            div()
+                                .flex_none()
+                                .max_w(px(120.))
+                                .truncate()
+                                .font_family(MONO_FONT)
+                                .text_xs()
+                                .text_color(theme.group)
+                                .child(preview_chars(&pattern[part.span.clone()], 14)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .child(part.description.clone()),
+                        )
+                        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                            if *hovered {
+                                this.set_hovered_part(Some(ix), cx);
+                            } else if this.hovered_part == Some(ix) {
+                                this.set_hovered_part(None, cx);
+                            }
+                        }))
+                }))
+                .into_any_element(),
+            Err(ExplainError::FancyOnly) => message(
+                "Look-around and backreferences only work with fancy-regex, and can't be explained yet.",
+            ),
+            Err(ExplainError::Invalid) => message("Fix the pattern to see it explained."),
+        };
+        div()
+            .id("explain")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .bg(theme.surface)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_md()
+            .p_1()
+            .child(body)
+    }
+
     fn render_matches(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.sample.read(cx).text().to_owned();
         let body: AnyElement = match &self.outcome {
@@ -1160,6 +1326,7 @@ impl Render for Matcha {
             .on_action(cx.listener(Self::new_pattern))
             .on_action(cx.listener(Self::toggle_library))
             .on_action(cx.listener(Self::copy_as_code))
+            .on_action(cx.listener(Self::toggle_explain))
             .size_full()
             .flex()
             .flex_col()
@@ -1256,8 +1423,15 @@ impl Render for Matcha {
                             .gap_1()
                             .w(px(340.))
                             .min_h_0()
-                            .child(section_label("MATCHES", &theme))
-                            .child(self.render_matches(&theme, cx)),
+                            .child(self.render_panel_tabs(&theme, cx))
+                            .child(match self.panel {
+                                Panel::Matches => {
+                                    self.render_matches(&theme, cx).into_any_element()
+                                }
+                                Panel::Explain => {
+                                    self.render_explain(&theme, cx).into_any_element()
+                                }
+                            }),
                     ),
             )
             .child(
