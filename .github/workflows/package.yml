@@ -1,0 +1,62 @@
+# Builds the release packages and uploads them as workflow artifacts.
+# Called by ci.yml (on pushes to main) and release.yml (on version tags).
+name: Package
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  appimage:
+    name: AppImage (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on an older Ubuntu so the AppImage runs on older distributions
+          # too: the binary needs at least the glibc it was built with (2.35).
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: make deps-linux
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+      - run: make fetch
+      - run: make appimage
+      - uses: actions/upload-artifact@v7
+        with:
+          name: matcha-linux-${{ matrix.arch }}
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  dmg:
+    name: macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package
+      - run: make fetch
+      # Signed ad hoc: the app runs, but other Macs ask the user to confirm until
+      # it is signed with a Developer ID and notarized.
+      - run: make dmg UNIVERSAL=1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: matcha-macos-universal
+          path: dist/*.dmg
+          if-no-files-found: error

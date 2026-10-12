@@ -1,0 +1,45 @@
+# Checks every pull request to main and every push to main. Pushes to main also
+# build the packages, downloadable from the workflow run's artifacts.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded pull request runs are cancelled; every push to main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        run: make deps-linux
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # Fails if Cargo.lock is out of date (it also pins libc; see README).
+      - run: make fetch
+      - run: make ci
+
+  package:
+    if: github.event_name == 'push'
+    needs: check
+    uses: ./.github/workflows/package.yml
