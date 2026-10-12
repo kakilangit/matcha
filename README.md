@@ -17,6 +17,7 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 - Two engines: [`regex`](https://crates.io/crates/regex) (linear time) and [`fancy-regex`](https://crates.io/crates/fancy-regex) (look-around, backreferences)
 - Clear error messages that point at the problem
 - Pattern library: save patterns with their sample text, replacement, flags, and engine
+- Copy as Rust: a ready-to-paste snippet for the selected engine and flags
 - Light and dark themes; override with `MATCHA_THEME=light|dark`
 
 ## Build
@@ -53,6 +54,7 @@ Saved patterns live in `~/Library/Application Support/Matcha/library.json` on ma
 | Save / save as   | `⌘S` / `⇧⌘S`   | `Ctrl+S` / `Ctrl+Shift+S` |
 | Library          | `⌘O`           | `Ctrl+O`                 |
 | New pattern      | `⌘N`           | `Ctrl+N`                 |
+| Copy as Rust     | `⇧⌘C`          | `Ctrl+Shift+C`           |
 | Next field       | `Tab`          | `Tab`                    |
 | Undo / redo      | `⌘Z` / `⇧⌘Z`   | `Ctrl+Z` / `Ctrl+Y`      |
 | Quit             | `⌘Q`           | `Ctrl+Q`                 |
@@ -63,7 +65,7 @@ Saved patterns live in `~/Library/Application Support/Matcha/library.json` on ma
 - [x] Flags and two engines
 - [x] Light and dark themes
 - [x] Pattern library
-- [ ] Copy as code
+- [x] Copy as Rust code
 - [ ] Pattern explanation
 - [ ] Packaged releases
 

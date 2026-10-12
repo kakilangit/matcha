@@ -3,11 +3,12 @@
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
-    MouseButton, ScrollHandle, SharedString, Subscription, Task, Window, actions, div, prelude::*,
-    px,
+    AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    FontWeight, KeyBinding, MouseButton, ScrollHandle, SharedString, Subscription, Task, Window,
+    actions, div, prelude::*, px,
 };
 
+use crate::codegen;
 use crate::editor::{Editor, EditorEvent, Highlight};
 use crate::engine::{EngineKind, Flags, MATCH_LIMIT, Matches, Regex};
 use crate::library::{self, Library, PatternData};
@@ -24,6 +25,7 @@ actions!(
         SavePatternAs,
         NewPattern,
         ToggleLibrary,
+        CopyAsCode,
     ]
 );
 
@@ -54,6 +56,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-s", SavePatternAs, ctx),
         KeyBinding::new("secondary-n", NewPattern, ctx),
         KeyBinding::new("secondary-o", ToggleLibrary, ctx),
+        KeyBinding::new("secondary-shift-c", CopyAsCode, ctx),
     ]);
 }
 
@@ -321,6 +324,31 @@ impl Matcha {
             window.focus(&self.pattern.focus_handle(cx));
         }
         self.recompute(cx);
+    }
+
+    fn copy_as_code(&mut self, _: &CopyAsCode, _: &mut Window, cx: &mut Context<Self>) {
+        let pattern = self.pattern.read(cx).text();
+        if pattern.is_empty() {
+            self.show_notice("Enter a pattern to copy it as code.".into(), true, cx);
+            return;
+        }
+        if Regex::new(pattern, self.flags, self.engine).is_err() {
+            self.show_notice(
+                "Fix the pattern before copying it as code.".into(),
+                true,
+                cx,
+            );
+            return;
+        }
+        let replacement = if self.show_replace {
+            self.replacement.read(cx).text()
+        } else {
+            ""
+        };
+        let code = codegen::rust_snippet(pattern, self.flags, self.engine, replacement);
+        cx.write_to_clipboard(ClipboardItem::new_string(code));
+        let notice = format!("Copied Rust code for {}", self.engine.label());
+        self.show_notice(notice, false, cx);
     }
 
     fn focus_order(&self) -> Vec<&Entity<Editor>> {
@@ -1131,6 +1159,7 @@ impl Render for Matcha {
             .on_action(cx.listener(Self::save_pattern_as))
             .on_action(cx.listener(Self::new_pattern))
             .on_action(cx.listener(Self::toggle_library))
+            .on_action(cx.listener(Self::copy_as_code))
             .size_full()
             .flex()
             .flex_col()
@@ -1149,7 +1178,32 @@ impl Render for Matcha {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(section_label("PATTERN", &theme))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(section_label("PATTERN", &theme))
+                                    .child(
+                                        div()
+                                            .id("copy-as-code")
+                                            .px_2()
+                                            .rounded_md()
+                                            .text_xs()
+                                            .cursor_pointer()
+                                            .text_color(theme.text_muted)
+                                            .hover(|el| el.bg(theme.border).text_color(theme.text))
+                                            .child(format!(
+                                                "Copy as Rust  {}",
+                                                shortcut("⇧⌘C", "Ctrl+Shift+C")
+                                            ))
+                                            .on_click(cx.listener(
+                                                |this, _: &ClickEvent, window, cx| {
+                                                    this.copy_as_code(&CopyAsCode, window, cx)
+                                                },
+                                            )),
+                                    ),
+                            )
                             .child(self.render_flags(&theme, cx)),
                     )
                     .child(editor_box(&self.pattern, window, cx, &theme))

@@ -1,4 +1,5 @@
 mod app;
+mod codegen;
 mod editor;
 mod engine;
 mod library;
