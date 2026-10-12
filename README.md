@@ -6,7 +6,7 @@
 
 A native regex workbench for macOS and Linux, built with Rust and [GPUI](https://www.gpui.rs/). Matches, groups, and replacements update as you type.
 
-> **Status:** early development, not yet released.
+> **Status:** early development. Latest release: [v0.1.0](https://github.com/kakilangit/matcha/releases/latest).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/kakilangit/static/refs/heads/main/matcha/matcha_screenshot.png" alt="Matcha showing live matches, named capture groups, and a replace preview" width="800">
@@ -24,6 +24,18 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 - Copy as Rust: a ready-to-paste snippet for the selected engine and flags
 - Explain: breaks a pattern into readable parts; hover a part to highlight it
 - Light and dark themes; override with `MATCHA_THEME=light|dark`
+
+## Install
+
+Download the latest build from [Releases](https://github.com/kakilangit/matcha/releases/latest).
+
+- **macOS** (Apple silicon and Intel): open `Matcha-<version>-universal.dmg` and drag Matcha to Applications. The app is not notarized yet, so macOS blocks the first launch: open it once, then choose **Open Anyway** in System Settings → Privacy & Security.
+- **Linux** (x86_64 or aarch64, glibc 2.35+, e.g. Ubuntu 22.04 or newer):
+  ```sh
+  chmod +x Matcha-<version>-x86_64.AppImage
+  ./Matcha-<version>-x86_64.AppImage
+  ```
+  To build and install from source with a launcher entry instead, see [Build](#build).
 
 ## Build
 
@@ -98,7 +110,7 @@ Saved patterns live in `~/Library/Application Support/Matcha/library.json` on ma
 - [x] Copy as Rust code
 - [x] Pattern explanation
 - [x] Packaging: `.dmg` and AppImage
-- [ ] Published releases built by CI
+- [x] Published releases built by CI
 
 ## Contributing
 
