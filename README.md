@@ -30,13 +30,7 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 Requires Rust stable ([rustup](https://rustup.rs/)).
 
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-- **Linux (Debian/Ubuntu):**
-  ```sh
-  sudo apt install build-essential pkg-config cmake clang \
-    libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
-    libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev libxcb1-dev \
-    libzstd-dev libasound2-dev
-  ```
+- **Linux (Debian/Ubuntu):** `make deps-linux`
 
 ```sh
 git clone https://github.com/kakilangit/matcha.git
@@ -59,6 +53,22 @@ Run `make` to list all targets.
 
 - **macOS:** `UNIVERSAL=1 make dmg` builds for Apple silicon and Intel. Without `MACOS_SIGN_IDENTITY` the app is signed ad hoc, so other Macs will block it until it is signed with a Developer ID and notarized.
 - **Linux:** the AppImage needs `file` and downloads `appimagetool` 1.9.1 on first use. It uses the build machine's glibc, so build on the oldest distribution you want to support.
+
+## Releasing
+
+CI only calls `make` targets, so every step can be run locally the same way. It runs `make ci` on every pull request to `main` and every push to `main`; pushes to `main` also build the packages as workflow artifacts.
+
+To publish a release:
+
+1. Set `version` in `Cargo.toml`, and move the `[Unreleased]` notes in `CHANGELOG.md` under a heading for that version.
+2. Merge to `main`, then check, tag, and push from the merged commit:
+   ```sh
+   git fetch origin main
+   make release-check TAG=v0.1.0
+   git tag v0.1.0 && git push origin v0.1.0
+   ```
+
+The release workflow runs the same `make release-check`, builds the `.dmg` and AppImages, and publishes them with the version's changelog section as the notes (`make release-notes VERSION=0.1.0` shows it).
 
 ## Library
 

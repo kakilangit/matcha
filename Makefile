@@ -6,12 +6,16 @@ PREFIX     ?= $(HOME)/.local
 DESTDIR    ?=
 ICON_SIZES := 16 32 48 64 128 256 512
 
+# Packaging options, passed through to the scripts, e.g. `make dmg UNIVERSAL=1`.
+export UNIVERSAL MACOS_SIGN_IDENTITY APPIMAGETOOL APPIMAGETOOL_VERSION
+
 .DEFAULT_GOAL := help
-.PHONY: help fmt fmt-check check lint test ci run build release icons \
-	install uninstall app dmg appimage clean
+.PHONY: help fmt fmt-check check lint test ci fetch run build release icons \
+	install uninstall app dmg appimage deps-linux release-check release-notes \
+	release-publish clean
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 fmt: ## Format the code
 	cargo fmt --all
@@ -29,6 +33,9 @@ test: ## Run the tests
 	cargo test
 
 ci: fmt-check check lint test ## Everything CI runs
+
+fetch: ## Download dependencies; fails if Cargo.lock is out of date
+	cargo fetch --locked
 
 run: ## Run a debug build
 	cargo run
@@ -59,11 +66,23 @@ uninstall: ## Remove what `make install` installed
 app: ## Build dist/Matcha.app (macOS)
 	SKIP_DMG=1 ./scripts/package-macos.sh
 
-dmg: ## Build dist/Matcha.app and a .dmg (macOS; UNIVERSAL=1 for Intel too)
+dmg: ## Build dist/Matcha.app and a .dmg (macOS; UNIVERSAL=1 adds Intel)
 	./scripts/package-macos.sh
 
 appimage: ## Build a .AppImage in dist/ (Linux)
 	./scripts/package-appimage.sh
+
+deps-linux: ## Install the build dependencies (Debian/Ubuntu)
+	./scripts/install-deps-linux.sh
+
+release-check: ## Check TAG (e.g. v0.1.0): matches Cargo.toml and CHANGELOG.md, on main
+	./scripts/release-check.sh $(TAG)
+
+release-notes: ## Print the CHANGELOG.md section for VERSION (e.g. 0.1.0)
+	@./scripts/changelog-notes.sh $(VERSION)
+
+release-publish: ## Create the GitHub release for TAG from dist/ (needs gh)
+	./scripts/release-publish.sh $(TAG)
 
 clean: ## Remove build output and dist/
 	cargo clean
