@@ -27,10 +27,15 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/kakilangit/matcha/releases/latest).
-
-- **macOS** (Apple silicon and Intel): open `Matcha-<version>-universal.dmg` and drag Matcha to Applications. The app is not notarized yet, so macOS blocks the first launch: open it once, then choose **Open Anyway** in System Settings → Privacy & Security.
-- **Linux** (x86_64 or aarch64, glibc 2.35+, e.g. Ubuntu 22.04 or newer):
+- **macOS** (Apple silicon and Intel), with [Homebrew](https://brew.sh):
+  ```sh
+  brew install --cask kakilangit/tap/matcha
+  ```
+  Or download `Matcha-<version>-universal.dmg` from [Releases](https://github.com/kakilangit/matcha/releases/latest) and drag Matcha to Applications. The app is not notarized yet, so macOS blocks it until you clear the quarantine flag (Homebrew does this for you):
+  ```sh
+  xattr -cr /Applications/Matcha.app
+  ```
+- **Linux**, from [Releases](https://github.com/kakilangit/matcha/releases/latest) (x86_64 or aarch64, glibc 2.35+, e.g. Ubuntu 22.04 or newer):
   ```sh
   chmod +x Matcha-<version>-x86_64.AppImage
   ./Matcha-<version>-x86_64.AppImage
