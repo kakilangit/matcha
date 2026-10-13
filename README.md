@@ -29,7 +29,7 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
 
 - **macOS** (Apple silicon and Intel), with [Homebrew](https://brew.sh):
   ```sh
-  brew install --cask kakilangit/tap/matcha
+  brew install --cask kakilangit/tap/matcha-app
   ```
   Or download `Matcha-<version>-universal.dmg` from [Releases](https://github.com/kakilangit/matcha/releases/latest) and drag Matcha to Applications. The app is not notarized yet, so macOS blocks it until you clear the quarantine flag (Homebrew does this for you):
   ```sh
