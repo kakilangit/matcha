@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{EngineKind, Flags};
+use crate::platform;
 
 /// Everything needed to restore a pattern into the workbench.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,22 +140,12 @@ fn write_entries(path: &Path, entries: &[Entry]) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-/// `MATCHA_LIBRARY` if set, otherwise the platform data directory:
-/// `~/Library/Application Support/Matcha` on macOS, `$XDG_DATA_HOME/matcha`
-/// (or `~/.local/share/matcha`) elsewhere.
+/// `MATCHA_LIBRARY` if set, otherwise the platform data directory.
 pub fn default_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("MATCHA_LIBRARY") {
         return Some(PathBuf::from(path));
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dir = if cfg!(target_os = "macos") {
-        home?.join("Library/Application Support/Matcha")
-    } else {
-        match std::env::var_os("XDG_DATA_HOME") {
-            Some(data) if !data.is_empty() => PathBuf::from(data).join("matcha"),
-            _ => home?.join(".local/share/matcha"),
-        }
-    };
+    let dir = platform::data_dir()?;
     Some(dir.join("library.json"))
 }
 

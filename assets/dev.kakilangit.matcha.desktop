@@ -1,10 +1,12 @@
 [Desktop Entry]
+Version=1.0
 Type=Application
 Name=Matcha
 Comment=Build, test, and debug regular expressions
 Exec=matcha
 Icon=dev.kakilangit.matcha
 Terminal=false
+StartupNotify=true
 Categories=Development;
 Keywords=regex;regular expression;pattern;
 StartupWMClass=dev.kakilangit.matcha

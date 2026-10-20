@@ -6,6 +6,16 @@ All notable changes to Matcha are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-20
+
+### Added
+
+- Linux: `.deb` packages for Debian and Ubuntu (amd64 and arm64), attached to each release alongside the AppImage.
+
+### Fixed
+
+- Linux: the window now has a title bar with minimize, maximize, and close buttons, and can be moved and resized on desktops that draw no window frame, such as GNOME on Wayland.
+
 ## [0.1.0] - 2026-10-12
 
 ### Added
@@ -22,5 +32,6 @@ All notable changes to Matcha are documented here. The format follows
 - Light and dark themes that follow the system.
 - macOS `.dmg` and Linux AppImage packages.
 
-[Unreleased]: https://github.com/kakilangit/matcha/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kakilangit/matcha/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/kakilangit/matcha/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kakilangit/matcha/releases/tag/v0.1.0

@@ -6,11 +6,6 @@
 
 use gpui::{Global, Hsla, WindowAppearance, rgb, rgba};
 
-#[cfg(target_os = "macos")]
-pub const MONO_FONT: &str = "Menlo";
-#[cfg(not(target_os = "macos"))]
-pub const MONO_FONT: &str = "DejaVu Sans Mono";
-
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub background: Hsla,

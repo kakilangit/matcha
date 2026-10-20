@@ -15,6 +15,7 @@ use gpui::{
     relative, size,
 };
 
+use crate::platform;
 use crate::theme::Theme;
 
 actions!(
@@ -83,31 +84,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-z", Undo, ctx),
         KeyBinding::new("secondary-shift-z", Redo, ctx),
     ]);
-    #[cfg(target_os = "macos")]
-    cx.bind_keys([
-        KeyBinding::new("alt-left", WordLeft, ctx),
-        KeyBinding::new("alt-right", WordRight, ctx),
-        KeyBinding::new("alt-shift-left", SelectWordLeft, ctx),
-        KeyBinding::new("alt-shift-right", SelectWordRight, ctx),
-        KeyBinding::new("alt-backspace", DeleteWordLeft, ctx),
-        KeyBinding::new("cmd-left", Home, ctx),
-        KeyBinding::new("cmd-right", End, ctx),
-        KeyBinding::new("cmd-shift-left", SelectHome, ctx),
-        KeyBinding::new("cmd-shift-right", SelectEnd, ctx),
-        KeyBinding::new("cmd-up", DocumentStart, ctx),
-        KeyBinding::new("cmd-down", DocumentEnd, ctx),
-    ]);
-    #[cfg(not(target_os = "macos"))]
-    cx.bind_keys([
-        KeyBinding::new("ctrl-left", WordLeft, ctx),
-        KeyBinding::new("ctrl-right", WordRight, ctx),
-        KeyBinding::new("ctrl-shift-left", SelectWordLeft, ctx),
-        KeyBinding::new("ctrl-shift-right", SelectWordRight, ctx),
-        KeyBinding::new("ctrl-backspace", DeleteWordLeft, ctx),
-        KeyBinding::new("ctrl-home", DocumentStart, ctx),
-        KeyBinding::new("ctrl-end", DocumentEnd, ctx),
-        KeyBinding::new("ctrl-y", Redo, ctx),
-    ]);
+    platform::bind_navigation_keys(cx, ctx);
 }
 
 /// A background color over a byte range of the editor's text.
