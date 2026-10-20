@@ -4,6 +4,7 @@ mod editor;
 mod engine;
 mod explain;
 mod library;
+mod platform;
 mod theme;
 
 use gpui::{
@@ -47,6 +48,7 @@ fn main() {
                     title: Some("Matcha".into()),
                     ..Default::default()
                 }),
+                window_decorations: platform::WINDOW_DECORATIONS,
                 app_id: Some("dev.kakilangit.matcha".into()),
                 window_min_size: Some(size(px(720.), px(480.))),
                 ..Default::default()

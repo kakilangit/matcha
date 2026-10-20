@@ -1,6 +1,6 @@
 [package]
 name = "matcha"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A native regular expression workbench built on GPUI"
 license = "MIT"
@@ -26,3 +26,23 @@ pedantic = { level = "warn", priority = -1 }
 unwrap_used = "forbid"
 expect_used = "forbid"
 panic = "forbid"
+
+[package.metadata.deb]
+maintainer = "kakilangit <app@kakilangit.dev>"
+section = "utils"
+priority = "optional"
+extended-description = "Matches, capture groups, and replacements update as you type. Supports the regex and fancy-regex engines, a saved pattern library, and Copy as Rust."
+# GPUI loads Vulkan at run time, so dpkg-shlibdeps cannot detect it.
+depends = "$auto, libvulkan1"
+assets = [
+  ["target/release/matcha", "usr/bin/", "755"],
+  ["assets/dev.kakilangit.matcha.desktop", "usr/share/applications/", "644"],
+  ["assets/icons/matcha-16.png", "usr/share/icons/hicolor/16x16/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-32.png", "usr/share/icons/hicolor/32x32/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-48.png", "usr/share/icons/hicolor/48x48/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-64.png", "usr/share/icons/hicolor/64x64/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-128.png", "usr/share/icons/hicolor/128x128/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-256.png", "usr/share/icons/hicolor/256x256/apps/dev.kakilangit.matcha.png", "644"],
+  ["assets/icons/matcha-512.png", "usr/share/icons/hicolor/512x512/apps/dev.kakilangit.matcha.png", "644"],
+  ["LICENSE", "usr/share/doc/matcha/copyright", "644"],
+]

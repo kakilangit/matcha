@@ -5,13 +5,32 @@ TARGET_DIR := $(or $(CARGO_TARGET_DIR),target)
 PREFIX     ?= $(HOME)/.local
 DESTDIR    ?=
 ICON_SIZES := 16 32 48 64 128 256 512
+VERSION    := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+UNAME      := $(shell uname -s)
+SUDO       := $(if $(filter 0,$(shell id -u)),,sudo)
+APPS_DIR   ?= /Applications
+
+# `make install` picks the native package for the platform: the .app on macOS,
+# the .deb on Debian/Ubuntu, and a plain file tree under PREFIX elsewhere.
+# Setting PREFIX or DESTDIR asks for that file tree on Linux; INSTALL_METHOD
+# (app, deb, or local) overrides the choice.
+ifeq ($(UNAME),Darwin)
+INSTALL_METHOD ?= app
+else ifneq ($(filter-out undefined file,$(origin PREFIX) $(origin DESTDIR)),)
+INSTALL_METHOD ?= local
+else ifneq ($(shell command -v dpkg 2>/dev/null),)
+INSTALL_METHOD ?= deb
+else
+INSTALL_METHOD ?= local
+endif
 
 # Packaging options, passed through to the scripts, e.g. `make dmg UNIVERSAL=1`.
 export UNIVERSAL MACOS_SIGN_IDENTITY APPIMAGETOOL APPIMAGETOOL_VERSION
 
 .DEFAULT_GOAL := help
 .PHONY: help fmt fmt-check check lint test ci fetch run build release icons \
-	install uninstall app dmg appimage deps-linux release-check release-notes \
+	install uninstall install-app install-deb install-local uninstall-app \
+	uninstall-deb uninstall-local app dmg appimage deb deps-linux release-check release-notes \
 	release-publish clean
 
 help: ## Show this help
@@ -49,15 +68,39 @@ release: ## Build an optimized binary
 icons: ## Regenerate assets/icons from assets/icon.svg
 	./scripts/build-icons.sh
 
-install: release ## Install on Linux with icon and launcher entry (PREFIX, DESTDIR)
+install: install-$(INSTALL_METHOD) ## Install for this platform: .deb on Debian/Ubuntu, .app on macOS, else PREFIX
+
+uninstall: uninstall-$(INSTALL_METHOD) ## Remove what `make install` installed
+
+# apt downloads as the unprivileged _apt user, which cannot read a checkout under
+# a private home directory, so install from a world-readable copy.
+install-deb: deb ## Install the .deb with apt (Debian/Ubuntu)
+	tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && chmod 755 "$$tmp" && \
+		deb=matcha_$(VERSION)-1_$$(dpkg --print-architecture).deb && \
+		cp "dist/$$deb" "$$tmp/$$deb" && chmod 644 "$$tmp/$$deb" && \
+		$(SUDO) apt-get install -y "$$tmp/$$deb"
+
+uninstall-deb: ## Remove the matcha .deb package
+	$(SUDO) apt-get remove -y matcha
+
+install-app: app ## Copy dist/Matcha.app to APPS_DIR (default /Applications) (macOS)
+	rm -rf "$(APPS_DIR)/Matcha.app"
+	cp -R dist/Matcha.app "$(APPS_DIR)/Matcha.app"
+
+uninstall-app: ## Remove Matcha.app from APPS_DIR (macOS)
+	rm -rf "$(APPS_DIR)/Matcha.app"
+
+install-local: release ## Install binary, icon, and launcher entry under PREFIX/DESTDIR (Linux)
 	install -Dm755 $(TARGET_DIR)/release/matcha $(DESTDIR)$(PREFIX)/bin/matcha
-	install -Dm644 assets/$(APP_ID).desktop $(DESTDIR)$(PREFIX)/share/applications/$(APP_ID).desktop
+	install -d $(DESTDIR)$(PREFIX)/share/applications
+	sed 's|^Exec=.*|Exec=$(PREFIX)/bin/matcha|' assets/$(APP_ID).desktop \
+		> $(DESTDIR)$(PREFIX)/share/applications/$(APP_ID).desktop
 	for size in $(ICON_SIZES); do \
 		install -Dm644 assets/icons/matcha-$$size.png \
 			$(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/$(APP_ID).png; \
 	done
 
-uninstall: ## Remove what `make install` installed
+uninstall-local: ## Remove what `make install-local` installed
 	rm -f $(DESTDIR)$(PREFIX)/bin/matcha $(DESTDIR)$(PREFIX)/share/applications/$(APP_ID).desktop
 	for size in $(ICON_SIZES); do \
 		rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${size}x$${size}/apps/$(APP_ID).png; \
@@ -71,6 +114,9 @@ dmg: ## Build dist/Matcha.app and a .dmg (macOS; UNIVERSAL=1 adds Intel)
 
 appimage: ## Build a .AppImage in dist/ (Linux)
 	./scripts/package-appimage.sh
+
+deb: ## Build a .deb in dist/ (Linux)
+	./scripts/package-deb.sh
 
 deps-linux: ## Install the build dependencies (Debian/Ubuntu)
 	./scripts/install-deps-linux.sh

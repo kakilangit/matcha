@@ -13,7 +13,8 @@ use crate::editor::{Editor, EditorEvent, Highlight};
 use crate::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match, Matches, Regex};
 use crate::explain::{self, ExplainError, Part};
 use crate::library::{self, Entry, Library, PatternData};
-use crate::theme::{MONO_FONT, Theme};
+use crate::platform::{self, MONO_FONT, shortcut};
+use crate::theme::Theme;
 
 actions!(
     matcha,
@@ -37,15 +38,6 @@ const KEY_CONTEXT: &str = "Matcha";
 const LISTED_MATCHES: usize = 500;
 const PREVIEW_CHARS: usize = 60;
 const NOTICE_DURATION: Duration = Duration::from_secs(3);
-
-/// Shows a shortcut in the platform's notation, e.g. `shortcut("⌘S", "Ctrl+S")`.
-fn shortcut(mac: &'static str, other: &'static str) -> &'static str {
-    if cfg!(target_os = "macos") {
-        mac
-    } else {
-        other
-    }
-}
 
 pub fn bind_keys(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -1484,7 +1476,7 @@ impl Matcha {
 impl Render for Matcha {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.global::<Theme>();
-        div()
+        let content = div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::focus_pattern))
@@ -1507,6 +1499,7 @@ impl Render for Matcha {
             .child(self.render_header(&theme, cx))
             .child(self.render_pattern_section(window, &theme, cx))
             .child(self.render_workspace(window, &theme, cx))
-            .child(self.render_status_bar(&theme))
+            .child(self.render_status_bar(&theme));
+        platform::frame(content, window, &theme)
     }
 }

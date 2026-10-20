@@ -6,7 +6,7 @@
 
 A native regex workbench for macOS and Linux, built with Rust and [GPUI](https://www.gpui.rs/). Matches, groups, and replacements update as you type.
 
-> **Status:** early development. Latest release: [v0.1.0](https://github.com/kakilangit/matcha/releases/latest).
+> **Status:** early development. Latest release: [v0.1.1](https://github.com/kakilangit/matcha/releases/latest).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/kakilangit/static/refs/heads/main/matcha/matcha_screenshot.png" alt="Matcha showing live matches, named capture groups, and a replace preview" width="800">
@@ -40,6 +40,10 @@ A native regex workbench for macOS and Linux, built with Rust and [GPUI](https:/
   chmod +x Matcha-<version>-x86_64.AppImage
   ./Matcha-<version>-x86_64.AppImage
   ```
+  Or, on Debian/Ubuntu, install the `.deb` (`amd64` or `arm64`), which adds a launcher entry and icon:
+  ```sh
+  sudo apt install ./matcha_<version>-1_amd64.deb
+  ```
   To build and install from source with a launcher entry instead, see [Build](#build).
 
 ## Build
@@ -66,10 +70,13 @@ Run `make` to list all targets.
 | `make dmg`      | `dist/Matcha.app`, `dist/Matcha-<version>-<arch>.dmg` | macOS |
 | `make app`      | `dist/Matcha.app` only                   | macOS    |
 | `make appimage` | `dist/Matcha-<version>-<arch>.AppImage`  | Linux    |
-| `make install`  | binary, icon, and launcher entry under `PREFIX` (default `~/.local`) | Linux |
+| `make deb`      | `dist/matcha_<version>-1_<arch>.deb`     | Linux    |
+| `make install`  | installs the native package: `.deb` on Debian/Ubuntu, `Matcha.app` in `/Applications` on macOS, otherwise `install-local` | Linux, macOS |
+| `make install-local` | binary, icon, and launcher entry under `PREFIX` (default `~/.local`) | Linux |
 
+- **Install:** `make install` builds and installs the package for your platform (with `sudo` for the `.deb`); `make uninstall` removes it. Setting `PREFIX` or `DESTDIR` installs a plain file tree instead, and `INSTALL_METHOD=app|deb|local` overrides the choice.
 - **macOS:** `UNIVERSAL=1 make dmg` builds for Apple silicon and Intel. Without `MACOS_SIGN_IDENTITY` the app is signed ad hoc, so other Macs will block it until it is signed with a Developer ID and notarized.
-- **Linux:** the AppImage needs `file` and downloads `appimagetool` 1.9.1 on first use. It uses the build machine's glibc, so build on the oldest distribution you want to support.
+- **Linux:** `make deb` needs `dpkg-dev` (included in `make deps-linux`) and installs `cargo-deb` on first use. The AppImage needs `file` and downloads `appimagetool` 1.9.1 on first use. It uses the build machine's glibc, so build on the oldest distribution you want to support.
 
 ## Releasing
 
