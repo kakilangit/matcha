@@ -122,6 +122,9 @@ impl AboutView {
                 .cursor_pointer()
                 .text_color(theme.accent)
                 .hover(gpui::Styled::underline)
+                // Keep the drag area around the link from starting a window move,
+                // which would take the mouse-up and swallow the click.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(label)
         };
         let note = |label: &'static str| div().text_sm().text_color(theme.text_muted).child(label);
