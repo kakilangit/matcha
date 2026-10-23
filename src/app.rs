@@ -12,7 +12,7 @@ use crate::codegen;
 use crate::editor::{Editor, EditorEvent, Highlight};
 use crate::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match, Matches, Regex};
 use crate::explain::{self, ExplainError, Part};
-use crate::library::{self, Entry, Library, PatternData};
+use crate::library::{Entry, Library, PatternData};
 use crate::platform::{self, MONO_FONT, shortcut};
 use crate::theme::Theme;
 
@@ -158,7 +158,7 @@ pub struct Matcha {
 }
 
 impl Matcha {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(library: Library, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sample_scroll = ScrollHandle::new();
         let result_scroll = ScrollHandle::new();
         let pattern = cx.new(|cx| Editor::new(cx).placeholder("Regular expression"));
@@ -197,7 +197,6 @@ impl Matcha {
             },
         ));
 
-        let library = Library::load(library::default_path());
         let show_library = !library.entries().is_empty();
 
         window.focus(&pattern.focus_handle(cx));

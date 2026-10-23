@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::platform::{self, MONO_FONT};
 use crate::theme::Theme;
-use crate::update;
+use crate::update::{self, ReleaseSource};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const COMMIT: &str = env!("GIT_COMMIT");
@@ -26,6 +26,7 @@ enum UpdateStatus {
 
 pub struct AboutView {
     icon: Arc<Image>,
+    releases: Arc<dyn ReleaseSource>,
     status: UpdateStatus,
     /// The running update check; replacing it cancels the previous one.
     check: Task<()>,
@@ -33,8 +34,8 @@ pub struct AboutView {
 
 impl AboutView {
     /// Opens the About window, or brings the open one to the front, and
-    /// optionally starts an update check.
-    pub fn open(check: bool, cx: &mut App) {
+    /// optionally starts an update check against `releases`.
+    pub fn open(check: bool, releases: &Arc<dyn ReleaseSource>, cx: &mut App) {
         let existing = cx
             .windows()
             .into_iter()
@@ -70,6 +71,7 @@ impl AboutView {
                 cx.new(|cx| {
                     let mut view = AboutView {
                         icon: Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec())),
+                        releases: releases.clone(),
                         status: UpdateStatus::NotChecked,
                         check: Task::ready(()),
                     };
@@ -87,10 +89,11 @@ impl AboutView {
 
     fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         self.status = UpdateStatus::Checking;
+        let releases = self.releases.clone();
         self.check = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async { update::newer_version(VERSION) })
+                .spawn(async move { update::newer_version(releases.as_ref(), VERSION) })
                 .await;
             this.update(cx, |this, cx| {
                 this.status = match result {

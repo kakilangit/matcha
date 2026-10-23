@@ -4,10 +4,14 @@ mod codegen;
 mod editor;
 mod engine;
 mod explain;
+mod json_store;
 mod library;
 mod platform;
 mod theme;
 mod update;
+
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui::{
     App, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
@@ -16,7 +20,10 @@ use gpui::{
 
 use crate::about::AboutView;
 use crate::app::Matcha;
+use crate::json_store::JsonFileStore;
+use crate::library::{Library, PatternStore};
 use crate::theme::Theme;
+use crate::update::{GitHubReleases, ReleaseSource};
 
 actions!(matcha, [Quit, About, CheckForUpdates]);
 
@@ -28,8 +35,11 @@ fn main() {
         app::bind_keys(cx);
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &About, cx| AboutView::open(false, cx));
-        cx.on_action(|_: &CheckForUpdates, cx| AboutView::open(true, cx));
+        let releases: Arc<dyn ReleaseSource> =
+            Arc::new(GitHubReleases::new(env!("CARGO_PKG_VERSION")));
+        let about_releases = releases.clone();
+        cx.on_action(move |_: &About, cx| AboutView::open(false, &about_releases, cx));
+        cx.on_action(move |_: &CheckForUpdates, cx| AboutView::open(true, &releases, cx));
         cx.observe_keystrokes(|event, _, _| {
             log::debug!("keystroke: {}", event.keystroke.unparse());
         })
@@ -70,7 +80,7 @@ fn main() {
                         window.refresh();
                     })
                     .detach();
-                cx.new(|cx| Matcha::new(window, cx))
+                cx.new(|cx| Matcha::new(Library::load(library_store()), window, cx))
             },
         );
         match window {
@@ -83,4 +93,13 @@ fn main() {
             }
         }
     });
+}
+
+/// The library file: `MATCHA_LIBRARY` if set, otherwise in the platform data directory.
+fn library_store() -> Option<Box<dyn PatternStore>> {
+    let path = match std::env::var_os("MATCHA_LIBRARY") {
+        Some(path) => PathBuf::from(path),
+        None => platform::data_dir()?.join("library.json"),
+    };
+    Some(Box::new(JsonFileStore::new(path)))
 }
