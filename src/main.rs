@@ -1,3 +1,4 @@
+mod about;
 mod app;
 mod codegen;
 mod editor;
@@ -12,10 +13,11 @@ use gpui::{
     WindowOptions, actions, prelude::*, px, size,
 };
 
+use crate::about::AboutView;
 use crate::app::Matcha;
 use crate::theme::Theme;
 
-actions!(matcha, [Quit]);
+actions!(matcha, [Quit, About]);
 
 fn main() {
     env_logger::init();
@@ -25,13 +27,18 @@ fn main() {
         app::bind_keys(cx);
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &About, cx| AboutView::open(cx));
         cx.observe_keystrokes(|event, _, _| {
             log::debug!("keystroke: {}", event.keystroke.unparse());
         })
         .detach();
         cx.set_menus(vec![Menu {
             name: "Matcha".into(),
-            items: vec![MenuItem::action("Quit Matcha", Quit)],
+            items: vec![
+                MenuItem::action("About Matcha", About),
+                MenuItem::separator(),
+                MenuItem::action("Quit Matcha", Quit),
+            ],
         }]);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
