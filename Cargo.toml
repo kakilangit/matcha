@@ -1,6 +1,6 @@
 [package]
 name = "matcha"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A native regular expression workbench built on GPUI"
 license = "MIT"
@@ -16,16 +16,29 @@ regex = "1.13.1"
 regex-syntax = "0.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+ureq = { version = "3.4.2", features = ["platform-verifier"] }
 
 [dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support", "html_reports"] }
 tempfile = "3.27.0"
+
+[[bench]]
+name = "search"
+harness = false
+
+# Release speed with symbols, for profilers and flamegraphs: `make profile`, `make flamegraph`.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# No panicking shortcuts in app code; tests may use them (see clippy.toml).
-unwrap_used = "forbid"
-expect_used = "forbid"
-panic = "forbid"
+# No panicking shortcuts in app code. Tests may use them (see clippy.toml), and
+# benches opt out at the top of the file; `deny` rather than `forbid` allows that.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [package.metadata.deb]
 maintainer = "kakilangit <app@kakilangit.dev>"

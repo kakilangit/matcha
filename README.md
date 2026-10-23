@@ -132,7 +132,9 @@ Issues and pull requests are welcome. Before submitting, run:
 make ci
 ```
 
-This checks formatting and runs clippy with the pedantic lints, which also reject `unwrap`, `expect`, and `panic!` outside tests.
+This checks formatting and runs clippy with the pedantic lints, which also reject `unwrap`, `expect`, and `panic!` outside tests and benchmarks.
+
+For benchmarks (`make bench`), profiling and flamegraphs (`make profile`, `make flamegraph`), and debugging (`make run-debug`, `make debugger`), see [docs/performance-and-debugging.md](docs/performance-and-debugging.md).
 
 ## License
 

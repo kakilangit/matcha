@@ -15,8 +15,8 @@ use gpui::{
     relative, size,
 };
 
-use crate::platform;
-use crate::theme::Theme;
+use matcha::platform;
+use matcha::theme::Theme;
 
 actions!(
     editor,

@@ -1,6 +1,6 @@
 //! The main window: pattern, sample text, matches panel and replace preview.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -8,13 +8,13 @@ use gpui::{
     actions, div, prelude::*, px,
 };
 
-use crate::codegen;
-use crate::editor::{Editor, EditorEvent, Highlight};
-use crate::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match, Matches, Regex};
-use crate::explain::{self, ExplainError, Part};
-use crate::library::{self, Entry, Library, PatternData};
-use crate::platform::{self, MONO_FONT, shortcut};
-use crate::theme::Theme;
+use matcha::editor::{Editor, EditorEvent, Highlight};
+use matcha::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match};
+use matcha::explain::ExplainError;
+use matcha::library::{Entry, Library, PatternData};
+use matcha::platform::{self, MONO_FONT, shortcut};
+use matcha::theme::Theme;
+use matcha::workbench::{self, Analysis, Delete, Outcome, Save, Texts, Workbench};
 
 actions!(
     matcha,
@@ -68,13 +68,6 @@ struct Notice {
 enum Panel {
     Matches,
     Explain,
-}
-
-enum Outcome {
-    /// No pattern entered yet.
-    Empty,
-    Error(String),
-    Found(Matches),
 }
 
 #[derive(Clone, Copy)]
@@ -134,31 +127,25 @@ pub struct Matcha {
     result: Entity<Editor>,
     sample_scroll: ScrollHandle,
     result_scroll: ScrollHandle,
-    flags: Flags,
-    engine: EngineKind,
-    show_replace: bool,
-    outcome: Outcome,
-    replace_error: Option<String>,
-    selected_match: Option<usize>,
+    bench: Workbench,
     panel: Panel,
-    explanation: Result<Vec<Part>, ExplainError>,
     /// Explanation part under the mouse, highlighted in the pattern.
     hovered_part: Option<usize>,
-    library: Library,
-    /// The library entry the workbench was loaded from or last saved to.
-    current: Option<u64>,
     show_library: bool,
     /// Name field shown while saving a new library entry.
     name_editor: Entity<Editor>,
     naming: bool,
-    /// Entry whose delete button was clicked once and awaits confirmation.
-    pending_delete: Option<u64>,
     notice: Option<Notice>,
+    /// The running search; replacing it drops the previous one's result.
+    search: Task<()>,
+    /// True from an input change until its search result is shown. Match ranges
+    /// may not fit the edited sample until then.
+    searching: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Matcha {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(library: Library, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sample_scroll = ScrollHandle::new();
         let result_scroll = ScrollHandle::new();
         let pattern = cx.new(|cx| Editor::new(cx).placeholder("Regular expression"));
@@ -187,6 +174,11 @@ impl Matcha {
                 })
             })
             .collect();
+        // Highlight colors are copied into the editors, so recolor them with the theme.
+        subscriptions.push(cx.observe_global::<Theme>(|this, cx| {
+            this.update_highlights(cx);
+            this.set_hovered_part(this.hovered_part, cx);
+        }));
         subscriptions.push(cx.subscribe_in(
             &name_editor,
             window,
@@ -197,7 +189,6 @@ impl Matcha {
             },
         ));
 
-        let library = Library::load(library::default_path());
         let show_library = !library.entries().is_empty();
 
         window.focus(&pattern.focus_handle(cx));
@@ -210,75 +201,56 @@ impl Matcha {
             result,
             sample_scroll,
             result_scroll,
-            flags: Flags::default(),
-            engine: EngineKind::default(),
-            show_replace: true,
-            outcome: Outcome::Empty,
-            replace_error: None,
-            selected_match: None,
+            bench: Workbench::new(library),
             panel: Panel::Matches,
-            explanation: Ok(Vec::new()),
             hovered_part: None,
-            library,
-            current: None,
             show_library,
             name_editor,
             naming: false,
-            pending_delete: None,
             notice: None,
+            search: Task::ready(()),
+            searching: false,
             _subscriptions: subscriptions,
         };
         this.recompute(cx);
         this
     }
 
-    fn compile(&self, cx: &App) -> Option<Result<Regex, String>> {
-        let pattern = self.pattern.read(cx).text();
-        (!pattern.is_empty()).then(|| Regex::new(pattern, self.flags, self.engine))
+    fn texts<'a>(&self, cx: &'a App) -> Texts<'a> {
+        Texts {
+            pattern: self.pattern.read(cx).text(),
+            sample: self.sample.read(cx).text(),
+            replacement: self.replacement.read(cx).text(),
+        }
     }
 
     /// Re-runs the search and replacement after any input changes.
+    /// Starts a search on a background thread after any input change. Keeps
+    /// typing responsive on large samples; a newer search replaces this one.
     fn recompute(&mut self, cx: &mut Context<Self>) {
-        let started = std::time::Instant::now();
-        let text = self.sample.read(cx).text().to_owned();
-        let regex = self.compile(cx);
-        self.outcome = match &regex {
-            None => Outcome::Empty,
-            Some(Err(err)) => Outcome::Error(err.clone()),
-            Some(Ok(regex)) => match regex.find_all(&text) {
-                Ok(matches) => Outcome::Found(matches),
-                Err(err) => Outcome::Error(err),
-            },
-        };
+        let request = self.bench.request(self.texts(cx));
+        self.searching = true;
+        self.search = cx.spawn(async move |this, cx| {
+            let started = Instant::now();
+            let analysis = cx
+                .background_executor()
+                .spawn(async move { workbench::analyze(&request) })
+                .await;
+            log::debug!("search took {:?}", started.elapsed());
+            this.update(cx, |this, cx| this.show_analysis(analysis, cx))
+                .ok();
+        });
+    }
 
-        self.replace_error = None;
-        let replaced = match &regex {
-            Some(Ok(regex)) if self.show_replace => {
-                let template = self.replacement.read(cx).text();
-                regex.replace_all(&text, template).unwrap_or_else(|err| {
-                    self.replace_error = Some(err);
-                    String::new()
-                })
-            }
-            _ => text,
-        };
+    fn show_analysis(&mut self, analysis: Analysis, cx: &mut Context<Self>) {
+        self.searching = false;
+        let out = self.bench.apply_analysis(analysis);
         self.result
-            .update(cx, |editor, cx| editor.set_text(replaced, cx));
-
-        let pattern = self.pattern.read(cx).text();
-        let explanation = explain::explain(pattern, self.flags);
-        if explanation != self.explanation {
-            self.explanation = explanation;
+            .update(cx, |editor, cx| editor.set_text(out.result, cx));
+        if out.explanation_changed {
             self.set_hovered_part(None, cx);
         }
-
-        if let (Some(ix), Outcome::Found(found)) = (self.selected_match, &self.outcome)
-            && ix >= found.matches.len()
-        {
-            self.selected_match = None;
-        }
         self.update_highlights(cx);
-        log::debug!("recompute took {:?}", started.elapsed());
         cx.notify();
     }
 
@@ -286,12 +258,12 @@ impl Matcha {
         let theme = *cx.global::<Theme>();
         let mut highlights = Vec::new();
         let mut markers = Vec::new();
-        if let Outcome::Found(found) = &self.outcome {
+        if let Outcome::Found(found) = self.bench.outcome() {
             for (ix, m) in found.matches.iter().enumerate() {
                 if m.range.is_empty() {
                     markers.push(m.range.start);
                 } else {
-                    let color = if self.selected_match == Some(ix) {
+                    let color = if self.bench.selected_match() == Some(ix) {
                         theme.match_selected
                     } else {
                         theme.matches[ix % 2]
@@ -309,13 +281,12 @@ impl Matcha {
     }
 
     fn select_match(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Outcome::Found(found) = &self.outcome else {
+        if self.searching {
+            return;
+        }
+        let Some(range) = self.bench.select_match(ix) else {
             return;
         };
-        let Some(range) = found.matches.get(ix).map(|m| m.range.clone()) else {
-            return;
-        };
-        self.selected_match = Some(ix);
         self.sample
             .update(cx, |editor, cx| editor.select_range(range, cx));
         self.update_highlights(cx);
@@ -323,14 +294,15 @@ impl Matcha {
     }
 
     fn toggle_flag(&mut self, flag: FlagKind, cx: &mut Context<Self>) {
-        let value = flag.get(&mut self.flags);
+        let mut flags = self.bench.flags();
+        let value = flag.get(&mut flags);
         *value = !*value;
+        self.bench.set_flags(flags);
         self.recompute(cx);
     }
 
     fn set_engine(&mut self, engine: EngineKind, cx: &mut Context<Self>) {
-        if self.engine != engine {
-            self.engine = engine;
+        if self.bench.set_engine(engine) {
             self.recompute(cx);
         }
     }
@@ -340,8 +312,9 @@ impl Matcha {
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_replace = !self.show_replace;
-        if !self.show_replace && self.replacement.focus_handle(cx).is_focused(window) {
+        let show = !self.bench.show_replace();
+        self.bench.set_show_replace(show);
+        if !show && self.replacement.focus_handle(cx).is_focused(window) {
             window.focus(&self.pattern.focus_handle(cx));
         }
         self.recompute(cx);
@@ -368,7 +341,7 @@ impl Matcha {
         self.hovered_part = part;
         let theme = *cx.global::<Theme>();
         let highlights = part
-            .and_then(|ix| self.explanation.as_ref().ok()?.get(ix))
+            .and_then(|ix| self.bench.explanation().as_ref().ok()?.get(ix))
             .filter(|part| !part.span.is_empty())
             .map(|part| Highlight {
                 range: part.span.clone(),
@@ -383,33 +356,19 @@ impl Matcha {
     }
 
     fn copy_as_code(&mut self, _: &CopyAsCode, _: &mut Window, cx: &mut Context<Self>) {
-        let pattern = self.pattern.read(cx).text();
-        if pattern.is_empty() {
-            self.show_notice("Enter a pattern to copy it as code.".into(), true, cx);
-            return;
+        match self.bench.rust_code(self.texts(cx)) {
+            Ok(code) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(code));
+                let notice = format!("Copied Rust code for {}", self.bench.engine().label());
+                self.show_notice(notice, false, cx);
+            }
+            Err(err) => self.show_notice(err, true, cx),
         }
-        if Regex::new(pattern, self.flags, self.engine).is_err() {
-            self.show_notice(
-                "Fix the pattern before copying it as code.".into(),
-                true,
-                cx,
-            );
-            return;
-        }
-        let replacement = if self.show_replace {
-            self.replacement.read(cx).text()
-        } else {
-            ""
-        };
-        let code = codegen::rust_snippet(pattern, self.flags, self.engine, replacement);
-        cx.write_to_clipboard(ClipboardItem::new_string(code));
-        let notice = format!("Copied Rust code for {}", self.engine.label());
-        self.show_notice(notice, false, cx);
     }
 
     fn focus_order(&self) -> Vec<&Entity<Editor>> {
         let mut order = vec![&self.pattern, &self.sample];
-        if self.show_replace {
+        if self.bench.show_replace() {
             order.push(&self.replacement);
         }
         order
@@ -440,25 +399,6 @@ impl Matcha {
 
 /// Library actions.
 impl Matcha {
-    fn current_data(&self, cx: &App) -> PatternData {
-        PatternData {
-            pattern: self.pattern.read(cx).text().to_owned(),
-            sample: self.sample.read(cx).text().to_owned(),
-            replacement: self.replacement.read(cx).text().to_owned(),
-            flags: self.flags,
-            engine: self.engine,
-        }
-    }
-
-    /// Whether the workbench differs from the saved entry, without copying the texts.
-    fn is_modified(&self, data: &PatternData, cx: &App) -> bool {
-        data.pattern != self.pattern.read(cx).text()
-            || data.sample != self.sample.read(cx).text()
-            || data.replacement != self.replacement.read(cx).text()
-            || data.flags != self.flags
-            || data.engine != self.engine
-    }
-
     fn show_notice(&mut self, text: String, is_error: bool, cx: &mut Context<Self>) {
         let timer = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(NOTICE_DURATION).await;
@@ -477,62 +417,38 @@ impl Matcha {
         cx.notify();
     }
 
-    /// Fills the workbench from `data` and re-runs the search.
-    fn apply(&mut self, data: &PatternData, cx: &mut Context<Self>) {
+    /// Fills the text fields from `data` and re-runs the search.
+    fn apply(&mut self, data: PatternData, cx: &mut Context<Self>) {
         self.pattern
-            .update(cx, |editor, cx| editor.set_text(data.pattern.clone(), cx));
+            .update(cx, |editor, cx| editor.set_text(data.pattern, cx));
         self.sample
-            .update(cx, |editor, cx| editor.set_text(data.sample.clone(), cx));
-        self.replacement.update(cx, |editor, cx| {
-            editor.set_text(data.replacement.clone(), cx);
-        });
-        self.flags = data.flags;
-        self.engine = data.engine;
-        self.selected_match = None;
+            .update(cx, |editor, cx| editor.set_text(data.sample, cx));
+        self.replacement
+            .update(cx, |editor, cx| editor.set_text(data.replacement, cx));
         self.recompute(cx);
     }
 
     fn save_pattern(&mut self, _: &SavePattern, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.current.filter(|&id| self.library.get(id).is_some()) else {
-            self.start_naming(String::new(), window, cx);
-            return;
-        };
-        let data = self.current_data(cx);
-        match self.library.update(id, data) {
-            Ok(()) => {
-                let name = self
-                    .library
-                    .get(id)
-                    .map(|e| e.name.clone())
-                    .unwrap_or_default();
-                self.show_notice(format!("Saved “{name}”"), false, cx);
-            }
+        let texts = self.texts(cx);
+        match self.bench.save(texts) {
+            Ok(Save::Saved(name)) => self.show_notice(format!("Saved “{name}”"), false, cx),
+            Ok(Save::NeedsName) => self.start_naming(String::new(), window, cx),
             Err(err) => self.show_notice(err, true, cx),
         }
     }
 
     fn save_pattern_as(&mut self, _: &SavePatternAs, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self
-            .current
-            .and_then(|id| self.library.get(id))
-            .map(|entry| format!("{} copy", entry.name))
-            .unwrap_or_default();
+        let name = self.bench.save_as_name();
         self.start_naming(name, window, cx);
     }
 
     fn start_naming(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.library.load_error().is_some() {
-            self.show_library = true;
-            self.show_notice(
-                "Saving is disabled because the library file can't be read.".into(),
-                true,
-                cx,
-            );
+        self.show_library = true;
+        if let Err(err) = self.bench.start_saving_new() {
+            self.show_notice(err, true, cx);
             return;
         }
-        self.show_library = true;
         self.naming = true;
-        self.pending_delete = None;
         self.name_editor.update(cx, |editor, cx| {
             editor.set_text(name, cx);
             editor.select_all_text(cx);
@@ -546,10 +462,9 @@ impl Matcha {
         if name.is_empty() {
             return;
         }
-        let data = self.current_data(cx);
-        match self.library.add(name.clone(), data) {
-            Ok(id) => {
-                self.current = Some(id);
+        let texts = self.texts(cx);
+        match self.bench.save_new(name.clone(), texts) {
+            Ok(()) => {
                 self.naming = false;
                 window.focus(&self.pattern.focus_handle(cx));
                 self.show_notice(format!("Saved “{name}”"), false, cx);
@@ -565,43 +480,26 @@ impl Matcha {
     }
 
     fn load_entry(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(data) = self.library.get(id).map(|entry| entry.data.clone()) else {
+        let Some(data) = self.bench.open(id) else {
             return;
         };
         self.naming = false;
-        self.pending_delete = None;
-        self.current = Some(id);
-        self.apply(&data, cx);
+        self.apply(data, cx);
         window.focus(&self.pattern.focus_handle(cx));
     }
 
     fn delete_entry(&mut self, id: u64, cx: &mut Context<Self>) {
-        if self.pending_delete != Some(id) {
-            self.pending_delete = Some(id);
-            cx.notify();
-            return;
-        }
-        self.pending_delete = None;
-        let name = self
-            .library
-            .get(id)
-            .map(|e| e.name.clone())
-            .unwrap_or_default();
-        match self.library.remove(id) {
-            Ok(()) => {
-                if self.current == Some(id) {
-                    self.current = None;
-                }
-                self.show_notice(format!("Deleted “{name}”"), false, cx);
-            }
+        match self.bench.delete(id) {
+            Ok(Delete::NeedsConfirmation) => cx.notify(),
+            Ok(Delete::Deleted(name)) => self.show_notice(format!("Deleted “{name}”"), false, cx),
             Err(err) => self.show_notice(err, true, cx),
         }
     }
 
     fn new_pattern(&mut self, _: &NewPattern, window: &mut Window, cx: &mut Context<Self>) {
-        self.current = None;
         self.naming = false;
-        self.apply(&PatternData::default(), cx);
+        let data = self.bench.new_pattern();
+        self.apply(data, cx);
         window.focus(&self.pattern.focus_handle(cx));
     }
 
@@ -639,7 +537,7 @@ fn editor_box(editor: &Entity<Editor>, window: &Window, cx: &App, theme: &Theme)
             window.focus(&editor_handle.focus_handle(cx));
             // Keep the focusable window root from taking focus back.
             window.prevent_default();
-            editor_handle.update(cx, super::editor::Editor::move_to_end);
+            editor_handle.update(cx, matcha::editor::Editor::move_to_end);
         })
         .bg(theme.surface)
         .border_1()
@@ -711,7 +609,7 @@ fn preview_chars(text: &str, limit: usize) -> String {
 impl Matcha {
     fn render_header(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let engine_button = |engine: EngineKind, cx: &mut Context<Self>| {
-            let active = self.engine == engine;
+            let active = self.bench.engine() == engine;
             div()
                 .id(SharedString::from(engine.label()))
                 .px_3()
@@ -779,8 +677,7 @@ impl Matcha {
                         .bg(theme.surface)
                         .border_1()
                         .border_color(theme.border)
-                        .child(engine_button(EngineKind::Standard, cx))
-                        .child(engine_button(EngineKind::Fancy, cx)),
+                        .children(EngineKind::ALL.map(|engine| engine_button(engine, cx))),
                 ),
             )
     }
@@ -826,9 +723,9 @@ impl Matcha {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let id = entry.id;
-        let selected = self.current == Some(id);
-        let modified = selected && self.is_modified(&entry.data, cx);
-        let confirming = self.pending_delete == Some(id);
+        let selected = self.bench.current() == Some(id);
+        let modified = selected && self.bench.is_modified(&entry.data, self.texts(cx));
+        let confirming = self.bench.pending_delete() == Some(id);
         let pattern = if entry.data.pattern.is_empty() {
             "(empty pattern)".to_owned()
         } else {
@@ -923,18 +820,19 @@ impl Matcha {
                 )
         });
 
-        let entries = self.library.entries();
-        let empty = (entries.is_empty() && !self.naming && self.library.load_error().is_none())
-            .then(|| {
-                div()
-                    .p_2()
-                    .text_sm()
-                    .text_color(theme.text_muted)
-                    .child(format!(
-                        "No saved patterns yet. Press {} to save the current one.",
-                        shortcut("⌘S", "Ctrl+S")
-                    ))
-            });
+        let entries = self.bench.library().entries();
+        let empty =
+            (entries.is_empty() && !self.naming && self.bench.library().load_error().is_none())
+                .then(|| {
+                    div()
+                        .p_2()
+                        .text_sm()
+                        .text_color(theme.text_muted)
+                        .child(format!(
+                            "No saved patterns yet. Press {} to save the current one.",
+                            shortcut("⌘S", "Ctrl+S")
+                        ))
+                });
 
         let rows = entries
             .iter()
@@ -963,7 +861,7 @@ impl Matcha {
                     .children(empty)
                     .children(rows),
             )
-            .children(self.library.load_error().map(|err| {
+            .children(self.bench.library().load_error().map(|err| {
                 div()
                     .text_xs()
                     .text_color(theme.error)
@@ -972,7 +870,7 @@ impl Matcha {
     }
 
     fn render_flags(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut flags = self.flags;
+        let mut flags = self.bench.flags();
         div().flex().gap_1().children(FlagKind::ALL.map(|flag| {
             let on = *flag.get(&mut flags);
             div()
@@ -1042,7 +940,9 @@ impl Matcha {
     }
 
     fn render_explain(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let pattern = self.pattern.read(cx).text();
+        // The spans belong to the explained pattern, which the pattern field may
+        // have moved on from while the next search runs.
+        let pattern = self.bench.searched_pattern();
         let message = |text: &'static str| {
             div()
                 .text_sm()
@@ -1050,7 +950,7 @@ impl Matcha {
                 .child(text)
                 .into_any_element()
         };
-        let body: AnyElement = match &self.explanation {
+        let body: AnyElement = match self.bench.explanation() {
             Ok(parts) if parts.is_empty() => message("Enter a pattern to see it explained."),
             Ok(parts) => div()
                 .flex()
@@ -1124,7 +1024,7 @@ impl Matcha {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let selected = self.selected_match == Some(ix);
+        let selected = self.bench.selected_match() == Some(ix);
         let match_text = if m.range.is_empty() {
             "(empty)".to_string()
         } else {
@@ -1180,8 +1080,10 @@ impl Matcha {
     }
 
     fn render_matches(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let text = self.sample.read(cx).text().to_owned();
-        let body: AnyElement = match &self.outcome {
+        // The ranges belong to the searched text, which the sample field may have
+        // moved on from while the next search runs.
+        let text = self.bench.searched_sample();
+        let body: AnyElement = match self.bench.outcome() {
             Outcome::Empty => div()
                 .text_sm()
                 .text_color(theme.text_muted)
@@ -1249,7 +1151,7 @@ impl Matcha {
     }
 
     fn status_text(&self) -> (String, bool) {
-        match &self.outcome {
+        match self.bench.outcome() {
             Outcome::Empty => ("No pattern".into(), false),
             Outcome::Error(_) => ("Invalid pattern".into(), true),
             Outcome::Found(found) => {
@@ -1319,7 +1221,7 @@ impl Matcha {
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.copy_as_code(&CopyAsCode, window, cx);
             }));
-        let error = match &self.outcome {
+        let error = match self.bench.outcome() {
             Outcome::Error(err) => Some(
                 div()
                     .font_family(MONO_FONT)
@@ -1366,11 +1268,11 @@ impl Matcha {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.sample_scroll);
-        let result: AnyElement = match &self.replace_error {
+        let result: AnyElement = match self.bench.replace_error() {
             Some(err) => div()
                 .text_sm()
                 .text_color(theme.error)
-                .child(err.clone())
+                .child(err.to_owned())
                 .into_any_element(),
             None => editor_box(&self.result, window, cx, theme)
                 .id("result")
@@ -1380,7 +1282,7 @@ impl Matcha {
                 .track_scroll(&self.result_scroll)
                 .into_any_element(),
         };
-        let replace_section = self.show_replace.then(|| {
+        let replace_section = self.bench.show_replace().then(|| {
             div()
                 .flex()
                 .flex_col()
@@ -1465,7 +1367,7 @@ impl Matcha {
             )
             .child(div().flex_none().child(format!(
                 "{} · {} save · {} library · {} replace",
-                self.engine.label(),
+                self.bench.engine().label(),
                 shortcut("⌘S", "Ctrl+S"),
                 shortcut("⌘O", "Ctrl+O"),
                 shortcut("⌘R", "Ctrl+R"),

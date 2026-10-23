@@ -18,12 +18,48 @@ pub enum EngineKind {
     Fancy,
 }
 
+/// Everything Matcha needs to know about one engine's crate besides compiling with it.
+struct EngineInfo {
+    /// The crate's name on crates.io, also shown in the UI.
+    label: &'static str,
+    /// The crate's name in Rust paths, e.g. `use fancy_regex::Regex`.
+    crate_path: &'static str,
+    /// The builder method that sets Unicode mode.
+    unicode_option: &'static str,
+}
+
 impl EngineKind {
-    pub fn label(self) -> &'static str {
+    /// Every engine, in the order the UI lists them.
+    pub const ALL: [EngineKind; 2] = [EngineKind::Standard, EngineKind::Fancy];
+
+    fn info(self) -> EngineInfo {
         match self {
-            EngineKind::Standard => "regex",
-            EngineKind::Fancy => "fancy-regex",
+            EngineKind::Standard => EngineInfo {
+                label: "regex",
+                crate_path: "regex",
+                unicode_option: "unicode",
+            },
+            EngineKind::Fancy => EngineInfo {
+                label: "fancy-regex",
+                crate_path: "fancy_regex",
+                unicode_option: "unicode_mode",
+            },
         }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        self.info().label
+    }
+
+    #[must_use]
+    pub fn crate_path(self) -> &'static str {
+        self.info().crate_path
+    }
+
+    #[must_use]
+    pub fn unicode_option(self) -> &'static str {
+        self.info().unicode_option
     }
 }
 
@@ -81,6 +117,11 @@ pub enum Regex {
 }
 
 impl Regex {
+    /// Compiles `pattern` for `engine` with `flags`.
+    ///
+    /// # Errors
+    ///
+    /// The engine's message when the pattern is invalid or uses syntax it lacks.
     pub fn new(pattern: &str, flags: Flags, engine: EngineKind) -> Result<Self, String> {
         match engine {
             EngineKind::Standard => regex::RegexBuilder::new(pattern)
@@ -118,6 +159,8 @@ impl Regex {
     }
 
     /// Finds up to [`MATCH_LIMIT`] non-overlapping matches.
+    ///
+    /// # Errors
     ///
     /// Only `fancy-regex` can fail here, when a search exceeds its backtracking limit.
     pub fn find_all(&self, text: &str) -> Result<Matches, String> {
@@ -173,6 +216,10 @@ impl Regex {
     }
 
     /// Replaces every match using a template such as `$1`, `${name}` or `$$`.
+    ///
+    /// # Errors
+    ///
+    /// Like [`Regex::find_all`], when `fancy-regex` exceeds its backtracking limit.
     pub fn replace_all(&self, text: &str, template: &str) -> Result<String, String> {
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
@@ -187,12 +234,17 @@ impl Regex {
                 }
             }
             Regex::Fancy(re) => {
+                // fancy-regex re-checks all of `dst` as UTF-8 on every expand, so
+                // expanding straight into `out` is quadratic in the output length.
+                let mut expansion = String::new();
                 for caps in re.captures_iter(text) {
                     let caps = caps.map_err(|err| err.to_string())?;
                     // Group 0 is the whole match and is always present.
                     let Some(whole) = caps.get(0) else { continue };
                     out.push_str(&text[last..whole.start()]);
-                    caps.expand(template, &mut out);
+                    expansion.clear();
+                    caps.expand(template, &mut expansion);
+                    out.push_str(&expansion);
                     last = whole.end();
                 }
             }
@@ -287,6 +339,17 @@ mod tests {
 
         let found = fancy_re(r"(\w)\1").find_all("abba").unwrap();
         assert_eq!(found.matches[0].range, 1..3);
+    }
+
+    #[test]
+    fn every_engine_is_listed_once_with_its_own_names() {
+        let labels: std::collections::HashSet<_> =
+            EngineKind::ALL.iter().map(|e| e.label()).collect();
+        let paths: std::collections::HashSet<_> =
+            EngineKind::ALL.iter().map(|e| e.crate_path()).collect();
+        assert_eq!(labels.len(), EngineKind::ALL.len());
+        assert_eq!(paths.len(), EngineKind::ALL.len());
+        assert!(EngineKind::ALL.contains(&EngineKind::default()));
     }
 
     #[test]

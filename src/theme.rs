@@ -4,7 +4,7 @@
     reason = "colors are written as hex RRGGBB(AA) codes, like in CSS"
 )]
 
-use gpui::{Global, Hsla, WindowAppearance, rgb, rgba};
+use gpui::{Global, Hsla, Window, WindowAppearance, rgb, rgba};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
@@ -85,3 +85,14 @@ impl Theme {
 }
 
 impl Global for Theme {}
+
+/// Keeps the global theme in step with `window`'s light or dark appearance. Views
+/// that bake theme colors into state observe the `Theme` global to update them.
+pub fn follow_appearance(window: &Window) {
+    window
+        .observe_window_appearance(|window, cx| {
+            cx.set_global(Theme::for_appearance(window.appearance()));
+            window.refresh();
+        })
+        .detach();
+}
