@@ -9,6 +9,7 @@ mod library;
 mod platform;
 mod theme;
 mod update;
+mod workbench;
 
 use std::path::PathBuf;
 use std::sync::Arc;

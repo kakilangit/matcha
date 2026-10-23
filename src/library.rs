@@ -107,29 +107,29 @@ impl Library {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod testing {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::*;
+    use super::{Entry, Library, PatternStore};
 
     /// An in-memory store; clones share the same contents.
     #[derive(Clone, Default)]
-    struct FakeStore(Rc<RefCell<FakeState>>);
+    pub struct FakeStore(pub Rc<RefCell<FakeState>>);
 
     #[derive(Default)]
-    struct FakeState {
-        entries: Vec<Entry>,
-        read_error: Option<String>,
-        fail_writes: bool,
+    pub struct FakeState {
+        pub entries: Vec<Entry>,
+        pub read_error: Option<String>,
+        pub fail_writes: bool,
     }
 
     impl FakeStore {
-        fn library(&self) -> Library {
+        pub fn library(&self) -> Library {
             Library::load(Some(Box::new(self.clone())))
         }
 
-        fn stored(&self) -> Vec<Entry> {
+        pub fn stored(&self) -> Vec<Entry> {
             self.0.borrow().entries.clone()
         }
     }
@@ -152,6 +152,12 @@ mod tests {
             Ok(())
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::FakeStore;
+    use super::*;
 
     fn data(pattern: &str) -> PatternData {
         PatternData {
