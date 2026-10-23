@@ -6,6 +6,11 @@ All notable changes to Matcha are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- macOS: About Matcha window with the version and commit, and a Copy button for the commit.
+- macOS: Check for Updates asks GitHub for the latest release and links to it when a newer version exists.
+
 ## [0.1.1] - 2026-10-20
 
 ### Added

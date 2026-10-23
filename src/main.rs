@@ -7,6 +7,7 @@ mod explain;
 mod library;
 mod platform;
 mod theme;
+mod update;
 
 use gpui::{
     App, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
@@ -17,7 +18,7 @@ use crate::about::AboutView;
 use crate::app::Matcha;
 use crate::theme::Theme;
 
-actions!(matcha, [Quit, About]);
+actions!(matcha, [Quit, About, CheckForUpdates]);
 
 fn main() {
     env_logger::init();
@@ -27,7 +28,8 @@ fn main() {
         app::bind_keys(cx);
         cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.on_action(|_: &About, cx| AboutView::open(cx));
+        cx.on_action(|_: &About, cx| AboutView::open(false, cx));
+        cx.on_action(|_: &CheckForUpdates, cx| AboutView::open(true, cx));
         cx.observe_keystrokes(|event, _, _| {
             log::debug!("keystroke: {}", event.keystroke.unparse());
         })
@@ -36,6 +38,7 @@ fn main() {
             name: "Matcha".into(),
             items: vec![
                 MenuItem::action("About Matcha", About),
+                MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::action("Quit Matcha", Quit),
             ],
