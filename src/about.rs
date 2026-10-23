@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, FontWeight, Image, ImageFormat, MouseButton,
-    Render, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, div, img, point,
-    prelude::*, px, size,
+    Render, Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, div, img,
+    point, prelude::*, px, size,
 };
 
 use crate::platform::{self, MONO_FONT};
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 use crate::update::{self, ReleaseSource};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -30,6 +30,7 @@ pub struct AboutView {
     status: UpdateStatus,
     /// The running update check; replacing it cancels the previous one.
     check: Task<()>,
+    _theme: Subscription,
 }
 
 impl AboutView {
@@ -67,13 +68,15 @@ impl AboutView {
                 app_id: Some("dev.kakilangit.matcha".into()),
                 ..Default::default()
             },
-            |_, cx| {
+            |window, cx| {
+                theme::follow_appearance(window);
                 cx.new(|cx| {
                     let mut view = AboutView {
                         icon: Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec())),
                         releases: releases.clone(),
                         status: UpdateStatus::NotChecked,
                         check: Task::ready(()),
+                        _theme: cx.observe_global::<Theme>(|_, cx| cx.notify()),
                     };
                     if check {
                         view.check_for_updates(cx);

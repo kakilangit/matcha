@@ -75,12 +75,7 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                window
-                    .observe_window_appearance(|window, cx| {
-                        cx.set_global(Theme::for_appearance(window.appearance()));
-                        window.refresh();
-                    })
-                    .detach();
+                theme::follow_appearance(window);
                 cx.new(|cx| Matcha::new(Library::load(library_store()), window, cx))
             },
         );

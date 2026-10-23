@@ -169,6 +169,11 @@ impl Matcha {
                 })
             })
             .collect();
+        // Highlight colors are copied into the editors, so recolor them with the theme.
+        subscriptions.push(cx.observe_global::<Theme>(|this, cx| {
+            this.update_highlights(cx);
+            this.set_hovered_part(this.hovered_part, cx);
+        }));
         subscriptions.push(cx.subscribe_in(
             &name_editor,
             window,

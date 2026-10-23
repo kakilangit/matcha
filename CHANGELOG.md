@@ -14,6 +14,8 @@ All notable changes to Matcha are documented here. The format follows
 ### Fixed
 
 - When saving the library fails, the pattern list no longer shows the change that wasn't saved.
+- Match highlights and the About window switch colors right away when the system changes between
+  light and dark mode.
 
 ## [0.1.1] - 2026-10-20
 
