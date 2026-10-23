@@ -18,12 +18,45 @@ pub enum EngineKind {
     Fancy,
 }
 
+/// Everything Matcha needs to know about one engine's crate besides compiling with it.
+struct EngineInfo {
+    /// The crate's name on crates.io, also shown in the UI.
+    label: &'static str,
+    /// The crate's name in Rust paths, e.g. `use fancy_regex::Regex`.
+    crate_path: &'static str,
+    /// The builder method that sets Unicode mode.
+    unicode_option: &'static str,
+}
+
 impl EngineKind {
-    pub fn label(self) -> &'static str {
+    /// Every engine, in the order the UI lists them.
+    pub const ALL: [EngineKind; 2] = [EngineKind::Standard, EngineKind::Fancy];
+
+    fn info(self) -> EngineInfo {
         match self {
-            EngineKind::Standard => "regex",
-            EngineKind::Fancy => "fancy-regex",
+            EngineKind::Standard => EngineInfo {
+                label: "regex",
+                crate_path: "regex",
+                unicode_option: "unicode",
+            },
+            EngineKind::Fancy => EngineInfo {
+                label: "fancy-regex",
+                crate_path: "fancy_regex",
+                unicode_option: "unicode_mode",
+            },
         }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.info().label
+    }
+
+    pub fn crate_path(self) -> &'static str {
+        self.info().crate_path
+    }
+
+    pub fn unicode_option(self) -> &'static str {
+        self.info().unicode_option
     }
 }
 
@@ -287,6 +320,17 @@ mod tests {
 
         let found = fancy_re(r"(\w)\1").find_all("abba").unwrap();
         assert_eq!(found.matches[0].range, 1..3);
+    }
+
+    #[test]
+    fn every_engine_is_listed_once_with_its_own_names() {
+        let labels: std::collections::HashSet<_> =
+            EngineKind::ALL.iter().map(|e| e.label()).collect();
+        let paths: std::collections::HashSet<_> =
+            EngineKind::ALL.iter().map(|e| e.crate_path()).collect();
+        assert_eq!(labels.len(), EngineKind::ALL.len());
+        assert_eq!(paths.len(), EngineKind::ALL.len());
+        assert!(EngineKind::ALL.contains(&EngineKind::default()));
     }
 
     #[test]

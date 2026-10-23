@@ -647,8 +647,7 @@ impl Matcha {
                         .bg(theme.surface)
                         .border_1()
                         .border_color(theme.border)
-                        .child(engine_button(EngineKind::Standard, cx))
-                        .child(engine_button(EngineKind::Fancy, cx)),
+                        .children(EngineKind::ALL.map(|engine| engine_button(engine, cx))),
                 ),
             )
     }

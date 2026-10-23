@@ -5,10 +5,7 @@ use crate::engine::{EngineKind, Flags};
 /// Rust code that builds the pattern with the chosen engine and flags, plus a
 /// `replace_all` call when a replacement template is set.
 pub fn rust_snippet(pattern: &str, flags: Flags, engine: EngineKind, replacement: &str) -> String {
-    let krate = match engine {
-        EngineKind::Standard => "regex",
-        EngineKind::Fancy => "fancy_regex",
-    };
+    let krate = engine.crate_path();
     let pattern = raw_string(pattern);
     let options = builder_options(flags, engine);
 
@@ -43,10 +40,7 @@ pub fn rust_snippet(pattern: &str, flags: Flags, engine: EngineKind, replacement
 /// Builder calls for every flag that differs from the engine's default.
 fn builder_options(flags: Flags, engine: EngineKind) -> Vec<String> {
     let defaults = Flags::default();
-    let unicode = match engine {
-        EngineKind::Standard => "unicode",
-        EngineKind::Fancy => "unicode_mode",
-    };
+    let unicode = engine.unicode_option();
     [
         (
             "case_insensitive",
