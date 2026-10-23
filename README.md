@@ -6,7 +6,9 @@
 
 A native regex workbench for macOS and Linux, built with Rust and [GPUI](https://www.gpui.rs/). Matches, groups, and replacements update as you type.
 
-> **Status:** early development. Latest release: [v0.1.1](https://github.com/kakilangit/matcha/releases/latest).
+[![Latest release](https://img.shields.io/github/v/release/kakilangit/matcha)](https://github.com/kakilangit/matcha/releases/latest)
+
+> **Status:** early development.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/kakilangit/static/refs/heads/main/matcha/matcha_screenshot.png" alt="Matcha showing live matches, named capture groups, and a replace preview" width="800">
@@ -88,11 +90,11 @@ To publish a release:
 2. Merge to `main`, then check, tag, and push from the merged commit:
    ```sh
    git fetch origin main
-   make release-check TAG=v0.1.0
-   git tag v0.1.0 && git push origin v0.1.0
+   make release-check TAG=vX.Y.Z
+   git tag vX.Y.Z && git push origin vX.Y.Z
    ```
 
-The release workflow runs the same `make release-check`, builds the `.dmg` and AppImages, and publishes them with the version's changelog section as the notes (`make release-notes VERSION=0.1.0` shows it).
+The release workflow runs the same `make release-check`, builds the `.dmg` and AppImages, and publishes them with the version's changelog section as the notes (`make release-notes VERSION=X.Y.Z` shows it).
 
 ## Library
 
