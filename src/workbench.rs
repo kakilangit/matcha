@@ -24,7 +24,57 @@ pub struct Texts<'a> {
     pub replacement: &'a str,
 }
 
-/// What [`Workbench::recompute`] produced for the window to show.
+/// The inputs to one search, owned so it can run on another thread.
+pub struct Request {
+    pattern: String,
+    sample: String,
+    replacement: String,
+    flags: Flags,
+    engine: EngineKind,
+    show_replace: bool,
+}
+
+/// Everything one search produces; see [`Workbench::apply_analysis`].
+pub struct Analysis {
+    outcome: Outcome,
+    result: String,
+    replace_error: Option<String>,
+    explanation: Result<Vec<Part>, ExplainError>,
+}
+
+/// Runs the search, replacement and explanation. Pure, so it can run on any thread.
+pub fn analyze(request: &Request) -> Analysis {
+    let regex = (!request.pattern.is_empty())
+        .then(|| Regex::new(&request.pattern, request.flags, request.engine));
+    let outcome = match &regex {
+        None => Outcome::Empty,
+        Some(Err(err)) => Outcome::Error(err.clone()),
+        Some(Ok(regex)) => match regex.find_all(&request.sample) {
+            Ok(matches) => Outcome::Found(matches),
+            Err(err) => Outcome::Error(err),
+        },
+    };
+
+    let mut replace_error = None;
+    let result = match &regex {
+        Some(Ok(regex)) if request.show_replace => regex
+            .replace_all(&request.sample, &request.replacement)
+            .unwrap_or_else(|err| {
+                replace_error = Some(err);
+                String::new()
+            }),
+        _ => request.sample.clone(),
+    };
+
+    Analysis {
+        outcome,
+        result,
+        replace_error,
+        explanation: explain::explain(&request.pattern, request.flags),
+    }
+}
+
+/// What [`Workbench::apply_analysis`] produced for the window to show.
 pub struct Recomputed {
     /// The replace preview, or the sample unchanged when there is nothing to replace.
     pub result: String,
@@ -133,33 +183,24 @@ impl Workbench {
         self.show_replace = show;
     }
 
-    /// Re-runs the search, replacement and explanation after any input changes.
-    pub fn recompute(&mut self, texts: Texts) -> Recomputed {
-        let regex =
-            (!texts.pattern.is_empty()).then(|| Regex::new(texts.pattern, self.flags, self.engine));
-        self.outcome = match &regex {
-            None => Outcome::Empty,
-            Some(Err(err)) => Outcome::Error(err.clone()),
-            Some(Ok(regex)) => match regex.find_all(texts.sample) {
-                Ok(matches) => Outcome::Found(matches),
-                Err(err) => Outcome::Error(err),
-            },
-        };
+    /// Snapshots the inputs so [`analyze`] can run on another thread.
+    pub fn request(&self, texts: Texts) -> Request {
+        Request {
+            pattern: texts.pattern.to_owned(),
+            sample: texts.sample.to_owned(),
+            replacement: texts.replacement.to_owned(),
+            flags: self.flags,
+            engine: self.engine,
+            show_replace: self.show_replace,
+        }
+    }
 
-        self.replace_error = None;
-        let result = match &regex {
-            Some(Ok(regex)) if self.show_replace => regex
-                .replace_all(texts.sample, texts.replacement)
-                .unwrap_or_else(|err| {
-                    self.replace_error = Some(err);
-                    String::new()
-                }),
-            _ => texts.sample.to_owned(),
-        };
-
-        let explanation = explain::explain(texts.pattern, self.flags);
-        let explanation_changed = explanation != self.explanation;
-        self.explanation = explanation;
+    /// Takes in the result of [`analyze`].
+    pub fn apply_analysis(&mut self, analysis: Analysis) -> Recomputed {
+        self.outcome = analysis.outcome;
+        self.replace_error = analysis.replace_error;
+        let explanation_changed = analysis.explanation != self.explanation;
+        self.explanation = analysis.explanation;
 
         if let (Some(ix), Outcome::Found(found)) = (self.selected_match, &self.outcome)
             && ix >= found.matches.len()
@@ -167,9 +208,16 @@ impl Workbench {
             self.selected_match = None;
         }
         Recomputed {
-            result,
+            result: analysis.result,
             explanation_changed,
         }
+    }
+
+    /// Analyzes `texts` on this thread, for tests.
+    #[cfg(test)]
+    pub fn recompute(&mut self, texts: Texts) -> Recomputed {
+        let analysis = analyze(&self.request(texts));
+        self.apply_analysis(analysis)
     }
 
     /// Selects match `ix` and returns its range in the sample, if it exists.
@@ -326,6 +374,13 @@ mod tests {
             Outcome::Found(found) => Some(found.matches.len()),
             _ => None,
         }
+    }
+
+    #[test]
+    fn searches_can_move_between_threads() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Request>();
+        assert_send::<Analysis>();
     }
 
     #[test]

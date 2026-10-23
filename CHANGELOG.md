@@ -11,6 +11,10 @@ All notable changes to Matcha are documented here. The format follows
 - macOS: About Matcha window with the version and commit, and a Copy button for the commit.
 - macOS: Check for Updates asks GitHub for the latest release and links to it when a newer version exists.
 
+### Changed
+
+- Searching runs in the background, so typing stays responsive with large sample texts.
+
 ### Fixed
 
 - When saving the library fails, the pattern list no longer shows the change that wasn't saved.

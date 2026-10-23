@@ -1,6 +1,6 @@
 //! The main window: pattern, sample text, matches panel and replace preview.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -14,7 +14,7 @@ use crate::explain::ExplainError;
 use crate::library::{Entry, Library, PatternData};
 use crate::platform::{self, MONO_FONT, shortcut};
 use crate::theme::Theme;
-use crate::workbench::{Delete, Outcome, Save, Texts, Workbench};
+use crate::workbench::{self, Analysis, Delete, Outcome, Save, Texts, Workbench};
 
 actions!(
     matcha,
@@ -136,6 +136,11 @@ pub struct Matcha {
     name_editor: Entity<Editor>,
     naming: bool,
     notice: Option<Notice>,
+    /// The running search; replacing it drops the previous one's result.
+    search: Task<()>,
+    /// True from an input change until its search result is shown. Match ranges
+    /// may not fit the edited sample until then.
+    searching: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -203,6 +208,8 @@ impl Matcha {
             name_editor,
             naming: false,
             notice: None,
+            search: Task::ready(()),
+            searching: false,
             _subscriptions: subscriptions,
         };
         this.recompute(cx);
@@ -218,17 +225,32 @@ impl Matcha {
     }
 
     /// Re-runs the search and replacement after any input changes.
+    /// Starts a search on a background thread after any input change. Keeps
+    /// typing responsive on large samples; a newer search replaces this one.
     fn recompute(&mut self, cx: &mut Context<Self>) {
-        let started = std::time::Instant::now();
-        let texts = self.texts(cx);
-        let out = self.bench.recompute(texts);
+        let request = self.bench.request(self.texts(cx));
+        self.searching = true;
+        self.search = cx.spawn(async move |this, cx| {
+            let started = Instant::now();
+            let analysis = cx
+                .background_executor()
+                .spawn(async move { workbench::analyze(&request) })
+                .await;
+            log::debug!("search took {:?}", started.elapsed());
+            this.update(cx, |this, cx| this.show_analysis(analysis, cx))
+                .ok();
+        });
+    }
+
+    fn show_analysis(&mut self, analysis: Analysis, cx: &mut Context<Self>) {
+        self.searching = false;
+        let out = self.bench.apply_analysis(analysis);
         self.result
             .update(cx, |editor, cx| editor.set_text(out.result, cx));
         if out.explanation_changed {
             self.set_hovered_part(None, cx);
         }
         self.update_highlights(cx);
-        log::debug!("recompute took {:?}", started.elapsed());
         cx.notify();
     }
 
@@ -259,6 +281,9 @@ impl Matcha {
     }
 
     fn select_match(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.searching {
+            return;
+        }
         let Some(range) = self.bench.select_match(ix) else {
             return;
         };
