@@ -8,9 +8,9 @@ use gpui::{
     point, prelude::*, px, size,
 };
 
-use crate::platform::{self, MONO_FONT};
-use crate::theme::{self, Theme};
-use crate::update::{self, ReleaseSource};
+use matcha::platform::{self, MONO_FONT};
+use matcha::theme::{self, Theme};
+use matcha::update::{self, ReleaseSource};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const COMMIT: &str = env!("GIT_COMMIT");

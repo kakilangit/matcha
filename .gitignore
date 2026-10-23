@@ -28,3 +28,6 @@ rustc-ice-*.txt
 
 # Packaged releases
 /dist
+
+# Written by `make flamegraph` (perf on Linux)
+perf.data*

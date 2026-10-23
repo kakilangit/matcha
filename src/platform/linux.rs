@@ -7,11 +7,11 @@ use gpui::{
     ResizeEdge, Window, WindowDecorations, div, prelude::*, px,
 };
 
-use crate::editor::{
+use matcha::editor::{
     DeleteWordLeft, DocumentEnd, DocumentStart, Redo, SelectWordLeft, SelectWordRight, WordLeft,
     WordRight,
 };
-use crate::theme::Theme;
+use matcha::theme::Theme;
 
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 

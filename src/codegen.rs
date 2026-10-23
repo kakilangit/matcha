@@ -1,9 +1,10 @@
 //! Turns the current pattern into a ready-to-paste Rust snippet.
 
-use crate::engine::{EngineKind, Flags};
+use matcha::engine::{EngineKind, Flags};
 
 /// Rust code that builds the pattern with the chosen engine and flags, plus a
 /// `replace_all` call when a replacement template is set.
+#[must_use]
 pub fn rust_snippet(pattern: &str, flags: Flags, engine: EngineKind, replacement: &str) -> String {
     let krate = engine.crate_path();
     let pattern = raw_string(pattern);

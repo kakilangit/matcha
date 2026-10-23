@@ -4,10 +4,10 @@
 
 use std::ops::Range;
 
-use crate::codegen;
-use crate::engine::{EngineKind, Flags, Matches, Regex};
-use crate::explain::{self, ExplainError, Part};
-use crate::library::{Library, PatternData};
+use matcha::codegen;
+use matcha::engine::{EngineKind, Flags, Matches, Regex};
+use matcha::explain::{self, ExplainError, Part};
+use matcha::library::{Library, PatternData};
 
 pub enum Outcome {
     /// No pattern entered yet.
@@ -43,6 +43,7 @@ pub struct Analysis {
 }
 
 /// Runs the search, replacement and explanation. Pure, so it can run on any thread.
+#[must_use]
 pub fn analyze(request: &Request) -> Analysis {
     let regex = (!request.pattern.is_empty())
         .then(|| Regex::new(&request.pattern, request.flags, request.engine));
@@ -111,6 +112,7 @@ pub struct Workbench {
 }
 
 impl Workbench {
+    #[must_use]
     pub fn new(library: Library) -> Self {
         Self {
             flags: Flags::default(),
@@ -126,42 +128,52 @@ impl Workbench {
         }
     }
 
+    #[must_use]
     pub fn flags(&self) -> Flags {
         self.flags
     }
 
+    #[must_use]
     pub fn engine(&self) -> EngineKind {
         self.engine
     }
 
+    #[must_use]
     pub fn show_replace(&self) -> bool {
         self.show_replace
     }
 
+    #[must_use]
     pub fn outcome(&self) -> &Outcome {
         &self.outcome
     }
 
+    #[must_use]
     pub fn replace_error(&self) -> Option<&str> {
         self.replace_error.as_deref()
     }
 
+    #[must_use]
     pub fn explanation(&self) -> &Result<Vec<Part>, ExplainError> {
         &self.explanation
     }
 
+    #[must_use]
     pub fn selected_match(&self) -> Option<usize> {
         self.selected_match
     }
 
+    #[must_use]
     pub fn library(&self) -> &Library {
         &self.library
     }
 
+    #[must_use]
     pub fn current(&self) -> Option<u64> {
         self.current
     }
 
+    #[must_use]
     pub fn pending_delete(&self) -> Option<u64> {
         self.pending_delete
     }
@@ -184,6 +196,7 @@ impl Workbench {
     }
 
     /// Snapshots the inputs so [`analyze`] can run on another thread.
+    #[must_use]
     pub fn request(&self, texts: Texts) -> Request {
         Request {
             pattern: texts.pattern.to_owned(),
@@ -230,7 +243,11 @@ impl Workbench {
         Some(range)
     }
 
-    /// Rust code for the pattern, or a message saying why there is none.
+    /// Rust code for the pattern.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user when the pattern is empty or doesn't compile.
     pub fn rust_code(&self, texts: Texts) -> Result<String, String> {
         if texts.pattern.is_empty() {
             return Err("Enter a pattern to copy it as code.".into());
@@ -251,6 +268,7 @@ impl Workbench {
         ))
     }
 
+    #[must_use]
     pub fn data(&self, texts: Texts) -> PatternData {
         PatternData {
             pattern: texts.pattern.to_owned(),
@@ -262,6 +280,7 @@ impl Workbench {
     }
 
     /// Whether the workbench differs from `data`, without copying the texts.
+    #[must_use]
     pub fn is_modified(&self, data: &PatternData, texts: Texts) -> bool {
         data.pattern != texts.pattern
             || data.sample != texts.sample
@@ -271,6 +290,10 @@ impl Workbench {
     }
 
     /// Saves over the current entry, or asks for a name when there is none.
+    ///
+    /// # Errors
+    ///
+    /// The library's message when saving fails.
     pub fn save(&mut self, texts: Texts) -> Result<Save, String> {
         let Some(id) = self.current.filter(|&id| self.library.get(id).is_some()) else {
             return Ok(Save::NeedsName);
@@ -285,6 +308,10 @@ impl Workbench {
     }
 
     /// Checks that a new entry can be saved, before asking for its name.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user when the library file couldn't be read, so saving is off.
     pub fn start_saving_new(&mut self) -> Result<(), String> {
         if self.library.load_error().is_some() {
             return Err("Saving is disabled because the library file can't be read.".into());
@@ -294,6 +321,7 @@ impl Workbench {
     }
 
     /// The suggested name for Save As: the current entry's name plus " copy".
+    #[must_use]
     pub fn save_as_name(&self) -> String {
         self.current
             .and_then(|id| self.library.get(id))
@@ -302,6 +330,10 @@ impl Workbench {
     }
 
     /// Saves a new entry named `name` and makes it the current one.
+    ///
+    /// # Errors
+    ///
+    /// The library's message when saving fails; the current entry is unchanged.
     pub fn save_new(&mut self, name: String, texts: Texts) -> Result<(), String> {
         let id = self.library.add(name, self.data(texts))?;
         self.current = Some(id);
@@ -332,6 +364,10 @@ impl Workbench {
     }
 
     /// Deletes entry `id` on the second call in a row for it.
+    ///
+    /// # Errors
+    ///
+    /// The library's message when saving fails; the entry is kept.
     pub fn delete(&mut self, id: u64) -> Result<Delete, String> {
         if self.pending_delete != Some(id) {
             self.pending_delete = Some(id);
@@ -354,7 +390,7 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::testing::FakeStore;
+    use matcha::library::testing::FakeStore;
 
     fn texts<'a>(pattern: &'a str, sample: &'a str, replacement: &'a str) -> Texts<'a> {
         Texts {

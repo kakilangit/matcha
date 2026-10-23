@@ -12,6 +12,10 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// Where the latest release comes from.
 pub trait ReleaseSource: Send + Sync {
     /// The latest release's tag, e.g. `v0.1.2`. Blocks on the network.
+    ///
+    /// # Errors
+    ///
+    /// A message for the log when the release can't be fetched or parsed.
     fn latest_tag(&self) -> Result<String, String>;
 }
 
@@ -21,6 +25,7 @@ pub struct GitHubReleases {
 }
 
 impl GitHubReleases {
+    #[must_use]
     pub fn new(current: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
@@ -57,6 +62,10 @@ impl ReleaseSource for GitHubReleases {
 }
 
 /// Returns the latest release's version if it is newer than `current`. Blocks on the network.
+///
+/// # Errors
+///
+/// The source's message when it can't tell the latest release.
 pub fn newer_version(source: &dyn ReleaseSource, current: &str) -> Result<Option<String>, String> {
     let tag = source.latest_tag()?;
     let latest = tag.trim_start_matches('v');

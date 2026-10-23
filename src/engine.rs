@@ -47,14 +47,17 @@ impl EngineKind {
         }
     }
 
+    #[must_use]
     pub fn label(self) -> &'static str {
         self.info().label
     }
 
+    #[must_use]
     pub fn crate_path(self) -> &'static str {
         self.info().crate_path
     }
 
+    #[must_use]
     pub fn unicode_option(self) -> &'static str {
         self.info().unicode_option
     }
@@ -114,6 +117,11 @@ pub enum Regex {
 }
 
 impl Regex {
+    /// Compiles `pattern` for `engine` with `flags`.
+    ///
+    /// # Errors
+    ///
+    /// The engine's message when the pattern is invalid or uses syntax it lacks.
     pub fn new(pattern: &str, flags: Flags, engine: EngineKind) -> Result<Self, String> {
         match engine {
             EngineKind::Standard => regex::RegexBuilder::new(pattern)
@@ -151,6 +159,8 @@ impl Regex {
     }
 
     /// Finds up to [`MATCH_LIMIT`] non-overlapping matches.
+    ///
+    /// # Errors
     ///
     /// Only `fancy-regex` can fail here, when a search exceeds its backtracking limit.
     pub fn find_all(&self, text: &str) -> Result<Matches, String> {
@@ -206,6 +216,10 @@ impl Regex {
     }
 
     /// Replaces every match using a template such as `$1`, `${name}` or `$$`.
+    ///
+    /// # Errors
+    ///
+    /// Like [`Regex::find_all`], when `fancy-regex` exceeds its backtracking limit.
     pub fn replace_all(&self, text: &str, template: &str) -> Result<String, String> {
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
@@ -220,12 +234,17 @@ impl Regex {
                 }
             }
             Regex::Fancy(re) => {
+                // fancy-regex re-checks all of `dst` as UTF-8 on every expand, so
+                // expanding straight into `out` is quadratic in the output length.
+                let mut expansion = String::new();
                 for caps in re.captures_iter(text) {
                     let caps = caps.map_err(|err| err.to_string())?;
                     // Group 0 is the whole match and is always present.
                     let Some(whole) = caps.get(0) else { continue };
                     out.push_str(&text[last..whole.start()]);
-                    caps.expand(template, &mut out);
+                    expansion.clear();
+                    caps.expand(template, &mut expansion);
+                    out.push_str(&expansion);
                     last = whole.end();
                 }
             }

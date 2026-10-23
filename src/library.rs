@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{EngineKind, Flags};
+use matcha::engine::{EngineKind, Flags};
 
 /// Everything needed to restore a pattern into the workbench.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,8 +26,17 @@ pub struct Entry {
 /// Where the library is kept. Errors are messages ready to show to the user.
 pub trait PatternStore {
     /// Reads every entry; nothing saved yet is an empty list, not an error.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user when the stored library can't be read or is from a
+    /// newer version.
     fn read(&self) -> Result<Vec<Entry>, String>;
     /// Replaces everything stored with `entries`.
+    ///
+    /// # Errors
+    ///
+    /// A message for the user when the library can't be written.
     fn write(&self, entries: &[Entry]) -> Result<(), String>;
 }
 
@@ -57,19 +66,26 @@ impl Library {
         }
     }
 
+    #[must_use]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
 
+    #[must_use]
     pub fn get(&self, id: u64) -> Option<&Entry> {
         self.entries.iter().find(|entry| entry.id == id)
     }
 
+    #[must_use]
     pub fn load_error(&self) -> Option<&str> {
         self.load_error.as_deref()
     }
 
     /// Adds a new entry at the top of the list and saves. Returns its id.
+    ///
+    /// # Errors
+    ///
+    /// When the library is disabled or the store fails; the entries are unchanged.
     pub fn add(&mut self, name: String, data: PatternData) -> Result<u64, String> {
         let id = self.entries.iter().map(|entry| entry.id).max().unwrap_or(0) + 1;
         let mut entries = self.entries.clone();
@@ -77,6 +93,12 @@ impl Library {
         self.commit(entries).map(|()| id)
     }
 
+    /// Replaces entry `id`'s contents and saves.
+    ///
+    /// # Errors
+    ///
+    /// When the entry is gone, the library is disabled, or the store fails; the
+    /// entries are unchanged.
     pub fn update(&mut self, id: u64, data: PatternData) -> Result<(), String> {
         let mut entries = self.entries.clone();
         let entry = entries
@@ -87,6 +109,11 @@ impl Library {
         self.commit(entries)
     }
 
+    /// Removes entry `id` and saves.
+    ///
+    /// # Errors
+    ///
+    /// When the library is disabled or the store fails; the entries are unchanged.
     pub fn remove(&mut self, id: u64) -> Result<(), String> {
         let mut entries = self.entries.clone();
         entries.retain(|entry| entry.id != id);
@@ -125,10 +152,12 @@ pub mod testing {
     }
 
     impl FakeStore {
+        #[must_use]
         pub fn library(&self) -> Library {
             Library::load(Some(Box::new(self.clone())))
         }
 
+        #[must_use]
         pub fn stored(&self) -> Vec<Entry> {
             self.0.borrow().entries.clone()
         }

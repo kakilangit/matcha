@@ -6,6 +6,8 @@ All notable changes to Matcha are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-23
+
 ### Added
 
 - macOS: About Matcha window with the version and commit, and a Copy button for the commit.
@@ -14,6 +16,8 @@ All notable changes to Matcha are documented here. The format follows
 ### Changed
 
 - Searching runs in the background, so typing stays responsive with large sample texts.
+- Replacing with `fancy-regex` is about 13 times faster on large samples; it used to slow down
+  as the result grew.
 
 ### Fixed
 
@@ -47,6 +51,7 @@ All notable changes to Matcha are documented here. The format follows
 - Light and dark themes that follow the system.
 - macOS `.dmg` and Linux AppImage packages.
 
-[Unreleased]: https://github.com/kakilangit/matcha/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kakilangit/matcha/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/kakilangit/matcha/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kakilangit/matcha/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kakilangit/matcha/releases/tag/v0.1.0

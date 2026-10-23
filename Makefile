@@ -24,11 +24,27 @@ else
 INSTALL_METHOD ?= local
 endif
 
+# Benchmarks, profiling, and debugging; see docs/performance-and-debugging.md.
+# BENCH filters benchmarks by name, e.g. `make bench BENCH=find_all/email`.
+BENCH        ?=
+BASELINE     ?= main
+PROFILE_SECS ?= 10
+LOG          ?= matcha=debug
+# e.g. SAMPLY_FLAGS="--save-only -o profile.json.gz" to save instead of opening a browser.
+SAMPLY_FLAGS ?=
+PROFILE_DIR  := $(TARGET_DIR)/profiles
+BENCH_NAME   := $(or $(subst /,-,$(BENCH)),all)
+# dtrace, which flamegraph uses on macOS, needs root; perf on Linux does not.
+FLAMEGRAPH   := cargo flamegraph --profile profiling $(if $(filter Darwin,$(UNAME)),--root)
+DEBUGGER     ?= $(if $(filter Darwin,$(UNAME)),rust-lldb,rust-gdb)
+
 # Packaging options, passed through to the scripts, e.g. `make dmg UNIVERSAL=1`.
 export UNIVERSAL MACOS_SIGN_IDENTITY APPIMAGETOOL APPIMAGETOOL_VERSION
 
 .DEFAULT_GOAL := help
 .PHONY: help fmt fmt-check check lint test ci fetch run build release icons \
+	bench bench-save bench-compare profiling-build profile profile-bench flamegraph \
+	flamegraph-bench run-debug debugger tools \
 	install uninstall install-app install-deb install-local uninstall-app \
 	uninstall-deb uninstall-local app dmg appimage deb deps-linux release-check release-notes \
 	release-publish clean
@@ -64,6 +80,43 @@ build: ## Build a debug binary
 
 release: ## Build an optimized binary
 	cargo build --release
+
+bench: ## Run the benchmarks (BENCH=find_all/email runs a subset)
+	cargo bench --bench search -- $(BENCH)
+
+bench-save: ## Run the benchmarks and save them as BASELINE (default main)
+	cargo bench --bench search -- --save-baseline $(BASELINE) $(BENCH)
+
+bench-compare: ## Run the benchmarks and compare them with BASELINE
+	cargo bench --bench search -- --baseline $(BASELINE) $(BENCH)
+
+profiling-build: ## Build an optimized binary with symbols, for profilers
+	cargo build --profile profiling
+
+profile: profiling-build ## Profile the app with samply; use it, quit, and the profile opens
+	samply record $(SAMPLY_FLAGS) $(TARGET_DIR)/profiling/matcha
+
+profile-bench: ## Profile benchmarks with samply for PROFILE_SECS each (BENCH=filter)
+	samply record $(SAMPLY_FLAGS) cargo bench --profile profiling --bench search -- \
+		--profile-time $(PROFILE_SECS) $(BENCH)
+
+flamegraph: ## Flamegraph of the app: use it, quit, then open PROFILE_DIR/app.svg
+	mkdir -p $(PROFILE_DIR)
+	$(FLAMEGRAPH) --bin matcha -o $(PROFILE_DIR)/app.svg
+
+flamegraph-bench: ## Flamegraph of benchmarks, PROFILE_SECS each (BENCH=filter)
+	mkdir -p $(PROFILE_DIR)
+	$(FLAMEGRAPH) --bench search -o $(PROFILE_DIR)/bench-$(BENCH_NAME).svg -- \
+		--bench --profile-time $(PROFILE_SECS) $(BENCH)
+
+run-debug: ## Run a debug build with logs and backtraces (LOG=matcha=trace for more)
+	RUST_LOG=$(LOG) RUST_BACKTRACE=1 cargo run
+
+debugger: build ## Start the debug build under rust-lldb (macOS) or rust-gdb (Linux)
+	$(DEBUGGER) $(TARGET_DIR)/debug/matcha
+
+tools: ## Install the profiling tools: cargo-flamegraph and samply
+	cargo install --locked flamegraph samply
 
 icons: ## Regenerate assets/icons from assets/icon.svg
 	./scripts/build-icons.sh

@@ -4,11 +4,11 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, App, KeyBinding, Window, WindowDecorations, prelude::*};
 
-use crate::editor::{
+use matcha::editor::{
     DeleteWordLeft, DocumentEnd, DocumentStart, End, Home, SelectEnd, SelectHome, SelectWordLeft,
     SelectWordRight, WordLeft, WordRight,
 };
-use crate::theme::Theme;
+use matcha::theme::Theme;
 
 pub const MONO_FONT: &str = "Menlo";
 

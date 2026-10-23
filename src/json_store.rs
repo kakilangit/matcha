@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::library::{Entry, PatternStore};
+use matcha::library::{Entry, PatternStore};
 
 #[derive(Default, Serialize, Deserialize)]
 struct LibraryFile {
@@ -21,6 +21,7 @@ pub struct JsonFileStore {
 }
 
 impl JsonFileStore {
+    #[must_use]
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
@@ -73,8 +74,8 @@ fn write_entries(path: &Path, entries: &[Entry]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineKind, Flags};
-    use crate::library::PatternData;
+    use matcha::engine::{EngineKind, Flags};
+    use matcha::library::PatternData;
 
     fn entry(id: u64, pattern: &str) -> Entry {
         Entry {

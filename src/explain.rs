@@ -8,7 +8,7 @@ use regex_syntax::ast::{
     SpecialLiteralKind,
 };
 
-use crate::engine::Flags;
+use matcha::engine::Flags;
 
 /// One line of the explanation: a slice of the pattern and what it does.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,6 +27,12 @@ pub enum ExplainError {
     Invalid,
 }
 
+/// Breaks `pattern` into parts with a plain-language description each.
+///
+/// # Errors
+///
+/// [`ExplainError::FancyOnly`] for look-around and backreferences, which the
+/// parser behind this doesn't support, and [`ExplainError::Invalid`] otherwise.
 pub fn explain(pattern: &str, flags: Flags) -> Result<Vec<Part>, ExplainError> {
     let ast = ast::parse::ParserBuilder::new()
         .ignore_whitespace(flags.ignore_whitespace)

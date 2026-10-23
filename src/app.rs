@@ -8,13 +8,13 @@ use gpui::{
     actions, div, prelude::*, px,
 };
 
-use crate::editor::{Editor, EditorEvent, Highlight};
-use crate::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match};
-use crate::explain::ExplainError;
-use crate::library::{Entry, Library, PatternData};
-use crate::platform::{self, MONO_FONT, shortcut};
-use crate::theme::Theme;
-use crate::workbench::{self, Analysis, Delete, Outcome, Save, Texts, Workbench};
+use matcha::editor::{Editor, EditorEvent, Highlight};
+use matcha::engine::{EngineKind, Flags, Group, MATCH_LIMIT, Match};
+use matcha::explain::ExplainError;
+use matcha::library::{Entry, Library, PatternData};
+use matcha::platform::{self, MONO_FONT, shortcut};
+use matcha::theme::Theme;
+use matcha::workbench::{self, Analysis, Delete, Outcome, Save, Texts, Workbench};
 
 actions!(
     matcha,
@@ -537,7 +537,7 @@ fn editor_box(editor: &Entity<Editor>, window: &Window, cx: &App, theme: &Theme)
             window.focus(&editor_handle.focus_handle(cx));
             // Keep the focusable window root from taking focus back.
             window.prevent_default();
-            editor_handle.update(cx, super::editor::Editor::move_to_end);
+            editor_handle.update(cx, matcha::editor::Editor::move_to_end);
         })
         .bg(theme.surface)
         .border_1()
