@@ -3,6 +3,7 @@
 //! their contents in as [`Texts`].
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use matcha::codegen;
 use matcha::engine::{EngineKind, Flags, Matches, Regex};
@@ -26,8 +27,8 @@ pub struct Texts<'a> {
 
 /// The inputs to one search, owned so it can run on another thread.
 pub struct Request {
-    pattern: String,
-    sample: String,
+    pattern: Arc<str>,
+    sample: Arc<str>,
     replacement: String,
     flags: Flags,
     engine: EngineKind,
@@ -36,6 +37,10 @@ pub struct Request {
 
 /// Everything one search produces; see [`Workbench::apply_analysis`].
 pub struct Analysis {
+    /// The pattern that was explained; the explanation's spans index into it.
+    pattern: Arc<str>,
+    /// The text that was searched; `outcome`'s ranges index into it.
+    sample: Arc<str>,
     outcome: Outcome,
     result: String,
     replace_error: Option<String>,
@@ -64,10 +69,12 @@ pub fn analyze(request: &Request) -> Analysis {
                 replace_error = Some(err);
                 String::new()
             }),
-        _ => request.sample.clone(),
+        _ => request.sample.to_string(),
     };
 
     Analysis {
+        pattern: Arc::clone(&request.pattern),
+        sample: Arc::clone(&request.sample),
         outcome,
         result,
         replace_error,
@@ -100,6 +107,10 @@ pub struct Workbench {
     flags: Flags,
     engine: EngineKind,
     show_replace: bool,
+    /// The pattern and sample the results came from. The text fields may have
+    /// changed since, so anything that slices with result ranges must use these.
+    searched_pattern: Arc<str>,
+    searched_sample: Arc<str>,
     outcome: Outcome,
     replace_error: Option<String>,
     explanation: Result<Vec<Part>, ExplainError>,
@@ -118,6 +129,8 @@ impl Workbench {
             flags: Flags::default(),
             engine: EngineKind::default(),
             show_replace: true,
+            searched_pattern: Arc::from(""),
+            searched_sample: Arc::from(""),
             outcome: Outcome::Empty,
             replace_error: None,
             explanation: Ok(Vec::new()),
@@ -141,6 +154,18 @@ impl Workbench {
     #[must_use]
     pub fn show_replace(&self) -> bool {
         self.show_replace
+    }
+
+    /// The pattern [`Workbench::explanation`] came from; its spans index into it.
+    #[must_use]
+    pub fn searched_pattern(&self) -> Arc<str> {
+        Arc::clone(&self.searched_pattern)
+    }
+
+    /// The text [`Workbench::outcome`] was found in; match ranges index into it.
+    #[must_use]
+    pub fn searched_sample(&self) -> Arc<str> {
+        Arc::clone(&self.searched_sample)
     }
 
     #[must_use]
@@ -199,8 +224,8 @@ impl Workbench {
     #[must_use]
     pub fn request(&self, texts: Texts) -> Request {
         Request {
-            pattern: texts.pattern.to_owned(),
-            sample: texts.sample.to_owned(),
+            pattern: Arc::from(texts.pattern),
+            sample: Arc::from(texts.sample),
             replacement: texts.replacement.to_owned(),
             flags: self.flags,
             engine: self.engine,
@@ -210,6 +235,8 @@ impl Workbench {
 
     /// Takes in the result of [`analyze`].
     pub fn apply_analysis(&mut self, analysis: Analysis) -> Recomputed {
+        self.searched_pattern = analysis.pattern;
+        self.searched_sample = analysis.sample;
         self.outcome = analysis.outcome;
         self.replace_error = analysis.replace_error;
         let explanation_changed = analysis.explanation != self.explanation;
@@ -417,6 +444,29 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<Request>();
         assert_send::<Analysis>();
+    }
+
+    #[test]
+    fn result_ranges_index_the_searched_texts() {
+        let mut bench = bench();
+        let request = bench.request(texts(r"b+\d", "aaa bbb1 ccc", ""));
+        // The text fields change while the search runs.
+        bench.recompute(texts("b", "abc", ""));
+        bench.apply_analysis(analyze(&request));
+
+        let sample = bench.searched_sample();
+        let Outcome::Found(found) = bench.outcome() else {
+            panic!("expected matches");
+        };
+        assert_eq!(&sample[found.matches[0].range.clone()], "bbb1");
+
+        let pattern = bench.searched_pattern();
+        let parts = bench.explanation().as_ref().unwrap();
+        let spans: Vec<&str> = parts
+            .iter()
+            .map(|part| &pattern[part.span.clone()])
+            .collect();
+        assert!(spans.contains(&r"\d"), "{spans:?}");
     }
 
     #[test]

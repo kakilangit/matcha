@@ -940,7 +940,9 @@ impl Matcha {
     }
 
     fn render_explain(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let pattern = self.pattern.read(cx).text();
+        // The spans belong to the explained pattern, which the pattern field may
+        // have moved on from while the next search runs.
+        let pattern = self.bench.searched_pattern();
         let message = |text: &'static str| {
             div()
                 .text_sm()
@@ -1078,7 +1080,9 @@ impl Matcha {
     }
 
     fn render_matches(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let text = self.sample.read(cx).text().to_owned();
+        // The ranges belong to the searched text, which the sample field may have
+        // moved on from while the next search runs.
+        let text = self.bench.searched_sample();
         let body: AnyElement = match self.bench.outcome() {
             Outcome::Empty => div()
                 .text_sm()
