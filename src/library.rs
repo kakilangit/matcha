@@ -80,32 +80,38 @@ impl Library {
     /// Adds a new entry at the top of the list and saves. Returns its id.
     pub fn add(&mut self, name: String, data: PatternData) -> Result<u64, String> {
         let id = self.entries.iter().map(|entry| entry.id).max().unwrap_or(0) + 1;
-        self.entries.insert(0, Entry { id, name, data });
-        self.save().map(|()| id)
+        let mut entries = self.entries.clone();
+        entries.insert(0, Entry { id, name, data });
+        self.commit(entries).map(|()| id)
     }
 
     pub fn update(&mut self, id: u64, data: PatternData) -> Result<(), String> {
-        let entry = self
-            .entries
+        let mut entries = self.entries.clone();
+        let entry = entries
             .iter_mut()
             .find(|entry| entry.id == id)
             .ok_or("This pattern is no longer in the library.")?;
         entry.data = data;
-        self.save()
+        self.commit(entries)
     }
 
     pub fn remove(&mut self, id: u64) -> Result<(), String> {
-        self.entries.retain(|entry| entry.id != id);
-        self.save()
+        let mut entries = self.entries.clone();
+        entries.retain(|entry| entry.id != id);
+        self.commit(entries)
     }
 
-    fn save(&self) -> Result<(), String> {
+    /// Saves `entries` and only then makes them current, so a failed save leaves
+    /// the library as it is on disk.
+    fn commit(&mut self, entries: Vec<Entry>) -> Result<(), String> {
         if let Some(err) = &self.load_error {
             return Err(err.clone());
         }
         let path = self.path.as_deref().ok_or("No data directory found.")?;
-        write_entries(path, &self.entries)
-            .map_err(|err| format!("Could not save {}: {err}", path.display()))
+        write_entries(path, &entries)
+            .map_err(|err| format!("Could not save {}: {err}", path.display()))?;
+        self.entries = entries;
+        Ok(())
     }
 }
 
@@ -204,7 +210,26 @@ mod tests {
         let mut library = Library::load(Some(path.clone()));
         assert!(library.load_error().is_some());
         assert!(library.add("New".into(), data("x")).is_err());
+        assert_eq!(library.entries(), []);
         assert_eq!(fs::read_to_string(&path).unwrap(), "not json");
+    }
+
+    #[test]
+    fn failed_save_keeps_entries_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        let mut library = Library::load(Some(sub.join("library.json")));
+        let id = library.add("Kept".into(), data("a")).unwrap();
+        let before = library.entries().to_vec();
+
+        // A file where the directory should be makes every save fail.
+        fs::remove_dir_all(&sub).unwrap();
+        fs::write(&sub, "").unwrap();
+
+        assert!(library.add("New".into(), data("b")).is_err());
+        assert!(library.update(id, data("changed")).is_err());
+        assert!(library.remove(id).is_err());
+        assert_eq!(library.entries(), before);
     }
 
     #[test]
