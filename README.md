@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icon.png" alt="Matcha icon" width="128">
+  <img src="assets/icons/matcha-256.png" alt="Matcha icon" width="128">
 </p>
 
 # Matcha
