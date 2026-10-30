@@ -1,0 +1,35 @@
+Matcha License
+
+Copyright (c) 2026 Firman Maulana. All rights reserved.
+
+Matcha is free to use. Its source code is not public; this license covers the
+released app.
+
+You may, free of charge:
+
+- download, install, and use the app, for personal or commercial work;
+- share unmodified copies of the released app, as long as you don't charge for
+  them.
+
+You may not:
+
+- sell the app, or include it in something you sell;
+- modify the app, or distribute modified copies;
+- reverse engineer, decompile, or disassemble the app, except where the law
+  allows it regardless of this limitation.
+
+What you make with the app is yours.
+
+The app includes open-source software, used under its own licenses, which are
+listed in THIRD_PARTY_LICENSES.txt inside the app (in /usr/share/doc/matcha on
+Linux). Those licenses, not this one, apply to those parts.
+
+Versions up to and including 0.1.5 were released under the MIT License and stay
+available under it.
+
+THE APP IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE APP OR THE USE
+OR OTHER DEALINGS IN THE APP.
