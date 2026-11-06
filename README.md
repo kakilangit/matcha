@@ -49,8 +49,9 @@ waiting, and your text stays on your machine.
 
 ### Pick the right engine
 
-- **Fast:** guaranteed linear time, safe on any input
-- **Fancy:** look-around and backreferences when you need them
+- **Standard:** fast on any input, the right choice for most patterns
+- **Advanced:** adds look-around and backreferences when you need them
+- Type a pattern that needs Advanced, and Matcha offers to switch
 - Flags: ignore case (`i`), multi-line (`m`), dot matches newline (`s`), verbose (`x`), and Unicode (`u`)
 
 ### Keep what works
