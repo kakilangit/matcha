@@ -21,18 +21,20 @@
 
 ---
 
-Regular expressions are easy to get wrong and hard to read back. Matcha is a fast desktop app for
-getting them right. Paste in some sample text, write a pattern, and see exactly what it matches,
-what each group captures, and what a replacement produces, right as you type. No browser tab, no
-waiting, and your text stays on your machine.
+Regular expressions are easy to write and impossible to read back. Matcha is a fast desktop app
+for getting them right: paste in some sample text, write a pattern, and see exactly what it
+matches, what each group captures, and what a replacement produces, right as you type. No browser
+tab, no testing a pattern in a chat window, and your text stays on your machine.
 
 ## Why Matcha
 
 - **Instant.** Every keystroke updates the results, even on large samples, and typing never lags.
+  A regex tool should never keep you waiting on it.
 - **Understandable.** Explain breaks any pattern into plain-language parts. Hover a part to see
-  what it matches.
+  what it matches, so the pattern you wrote on Friday still makes sense on Monday.
 - **Ready to use.** Copy a working pattern straight into your code as a Rust snippet.
-- **Native.** A real desktop app for macOS and Linux, not a web page in a window.
+- **Native.** A real desktop app for macOS and Linux, not a web page in a window with a
+  cheatsheet open in the next tab.
 - **Free.**
 
 ## What it does
