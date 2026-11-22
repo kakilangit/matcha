@@ -3,7 +3,7 @@
 [repo]
 	tier = production
 	default-branch = main
-	push-default-branch = false
+	push-default-branch = true
 [identity]
 	name = kakilangit
 	email = dev@rttf.dev
