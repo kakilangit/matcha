@@ -1,12 +1,1 @@
-# .agentic/config: read by agents and hooks with `git config -f .agentic/config <key>`.
-# Keys and defaults: core/config.md in the agentic-engineering package.
-[repo]
-	tier = production
-	default-branch = main
-	push-default-branch = true
-[identity]
-	name = kakilangit
-	email = dev@rttf.dev
-[deploy]
-	trigger = merge:main
-	trigger = tag:v*
+../.heinzel/config
